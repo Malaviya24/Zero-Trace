@@ -5,7 +5,7 @@
   <meta charset="UTF-8" />
   <link rel="icon" type="image/png" href="/logo.png" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Chattrix</title>
+  <title>Zero-Trace</title>
   <style>
     #splash-screen {
       position: fixed;
@@ -46,6 +46,12 @@
       -webkit-text-fill-color: transparent;
       background-clip: text;
     }
+    #splash-logo {
+      width: 48px;
+      height: 48px;
+      margin-bottom: 1rem;
+      object-fit: contain;
+    }
     @keyframes splash-spin {
       to { transform: rotate(360deg); }
     }
@@ -61,8 +67,9 @@
     } catch(e) {}
   </script>
   <div id="splash-screen">
+    <img id="splash-logo" src="/logo.png" alt="Zero-Trace Logo" />
     <div class="splash-ring"></div>
-    <div class="splash-title">Chattrix</div>
+    <div class="splash-title">Zero-Trace</div>
   </div>
   <div id="root"></div>
   <script type="module" src="/src/main.tsx"></script>
