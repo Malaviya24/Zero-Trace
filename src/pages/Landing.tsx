@@ -100,7 +100,7 @@ export default function Landing() {
   const faqs = [
     {
       question: "Do I need to create an account?",
-      answer: "No. Chattrix is anonymous by default. Create a room and share the link—no sign-up required.",
+      answer: "No. Zero-Trace is anonymous by default. Create a room and share the link—no sign-up required.",
     },
     {
       question: "Are messages end-to-end encrypted?",
@@ -175,7 +175,7 @@ export default function Landing() {
           >
             <div className="flex flex-col items-start leading-tight">
               <span className="font-extrabold text-xl tracking-tight gradient-text">
-                Chattrix
+                Zero-Trace
               </span>
               <span className="text-[11px] text-muted-foreground/80">Ephemeral Chat</span>
             </div>
@@ -185,7 +185,7 @@ export default function Landing() {
             <Button
               variant="ghost"
               size="icon"
-              onClick={toggleTheme}
+              onClick={toggleTheme} 
               aria-label="Toggle dark mode"
               className="rounded-full"
             >
@@ -438,7 +438,7 @@ export default function Landing() {
       >
         <div className="text-center mb-12">
           <h2 className="text-3xl sm:text-4xl font-bold mb-3">
-            Why <span className="gradient-text">Chattrix</span>?
+            Why <span className="gradient-text">Zero-Trace</span>?
           </h2>
           <p className="text-muted-foreground text-lg max-w-2xl mx-auto">
             Privacy-first features designed to keep your conversations truly private.
@@ -604,11 +604,11 @@ export default function Landing() {
         className="border-t border-primary/10"
       >
         <div className="max-w-6xl mx-auto px-4 sm:px-6 py-6 flex flex-col sm:flex-row items-center justify-between gap-3">
-          <span className="font-bold gradient-text text-sm">Chattrix</span>
+          <span className="font-bold gradient-text text-sm">Zero-Trace</span>
           <p className="text-xs text-muted-foreground text-center">
             Built with privacy in mind. No tracking, no analytics, no data collection.
           </p>
-          <p className="text-xs text-muted-foreground">© 2025 Chattrix</p>
+          <p className="text-xs text-muted-foreground">© 2025 Zero-Trace</p>
         </div>
       </motion.footer>
 
