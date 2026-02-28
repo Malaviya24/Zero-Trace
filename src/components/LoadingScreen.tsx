@@ -98,13 +98,7 @@ export function LoadingScreen({
             className="relative z-10 flex flex-col items-center gap-8"
           >
             <div className={isSplash ? "loading-logo-ring loading-logo-lg" : "loading-logo-ring"}>
-              <div className={isSplash ? "loading-logo-inner loading-logo-inner-lg" : "loading-logo-inner"}>
-                {isSplash ? (
-                  <MessageSquare className="h-8 w-8 text-primary" />
-                ) : (
-                  <Shield className="h-6 w-6 text-primary" />
-                )}
-              </div>
+              {/* No logo inside the ring for splash screen */}
             </div>
 
             <div className="text-center space-y-2">
@@ -115,7 +109,7 @@ export function LoadingScreen({
                   transition={{ delay: 0.3 }}
                   className="text-3xl font-bold gradient-text"
                 >
-                  Chattrix
+                  Zero-Trace
                 </motion.h1>
               )}
               <motion.p
