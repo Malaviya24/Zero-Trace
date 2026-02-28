@@ -1,0 +1,2 @@
+   npx convex deploy
+   

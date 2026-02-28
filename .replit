@@ -1,0 +1,52 @@
+modules = ["nodejs-20", "web", "bash"]
+[agent]
+expertMode = true
+
+[nix]
+channel = "stable-25_05"
+
+[userenv]
+
+[userenv.development]
+
+[userenv.shared]
+VITE_CONVEX_URL = "https://decisive-gnat-164.eu-west-1.convex.cloud"
+CONVEX_DEPLOY_KEY = "dev:decisive-gnat-164|eyJ2MiI6ImE4ZGFmNjM3ZWIyMzQ3ZGI5NWI1MzE2MDE5ZjkwNzFmIn0="
+
+[workflows]
+runButton = "Project"
+
+[[workflows.workflow]]
+name = "Project"
+mode = "parallel"
+author = "agent"
+
+[[workflows.workflow.tasks]]
+task = "workflow.run"
+args = "Start application"
+
+[[workflows.workflow]]
+name = "Start application"
+author = "agent"
+
+[workflows.workflow.metadata]
+outputType = "webview"
+
+[[workflows.workflow.tasks]]
+task = "shell.exec"
+args = "cd /home/runner/workspace && echo \"VITE_CONVEX_URL=${VITE_CONVEX_URL:0:20}...\" && pnpm dev"
+waitForPort = 5000
+
+[[ports]]
+localPort = 5000
+externalPort = 80
+
+[[ports]]
+localPort = 5001
+externalPort = 3001
+
+[deployment]
+deploymentTarget = "autoscale"
+build = ["pnpm", "build"]
+publicDir = "dist"
+run = ["node", "server.js"]

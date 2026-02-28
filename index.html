@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8" />
+  <link rel="icon" type="image/png" href="/logo.png" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Chattrix</title>
+  <style>
+    #splash-screen {
+      position: fixed;
+      inset: 0;
+      z-index: 9999;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 1.5rem;
+      background: oklch(0.96 0.012 280);
+      transition: opacity 0.4s ease-out;
+      font-family: system-ui, -apple-system, sans-serif;
+    }
+    .dark #splash-screen { background: oklch(0.16 0.015 280); }
+    .dark #splash-screen .splash-ring {
+      border-top-color: oklch(0.68 0.18 285) !important;
+      border-right-color: oklch(0.68 0.18 285 / 40%) !important;
+    }
+    #splash-screen.fade-out {
+      opacity: 0;
+      pointer-events: none;
+    }
+    #splash-screen .splash-ring {
+      width: 72px;
+      height: 72px;
+      border-radius: 50%;
+      border: 2.5px solid transparent;
+      border-top-color: oklch(0.55 0.24 285);
+      border-right-color: oklch(0.55 0.24 285 / 40%);
+      animation: splash-spin 1.1s cubic-bezier(0.4, 0, 0.2, 1) infinite;
+    }
+    #splash-screen .splash-title {
+      font-size: 1.5rem;
+      font-weight: 700;
+      background: linear-gradient(135deg, oklch(0.55 0.24 285), oklch(0.65 0.22 310), oklch(0.6 0.2 250));
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+    }
+    @keyframes splash-spin {
+      to { transform: rotate(360deg); }
+    }
+  </style>
+</head>
+
+<body>
+  <script>
+    try {
+      var s = localStorage.getItem("theme");
+      var d = window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches;
+      if (s ? s === "dark" : d) document.documentElement.classList.add("dark");
+    } catch(e) {}
+  </script>
+  <div id="splash-screen">
+    <div class="splash-ring"></div>
+    <div class="splash-title">Chattrix</div>
+  </div>
+  <div id="root"></div>
+  <script type="module" src="/src/main.tsx"></script>
+</body>
+
+</html>
