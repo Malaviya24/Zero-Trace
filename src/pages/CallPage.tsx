@@ -220,8 +220,12 @@ function CallPageContent() {
 
   // Handle late arrival of offer (if I joined before offer was ready)
   useEffect(() => {
-    if (!call?.offer || !state.localStream || state.peerConnection || isInitiatorRef.current || !myParticipant) return;
+    if (!call?.offer || !state.localStream || state.peerConnection || isInitiatorRef.current || !myParticipant || !participants) return;
     
+    // Ensure we have a target participant to send answer to
+    const target = participants.find((p: any) => p._id !== myParticipant._id);
+    if (!target) return;
+
     let isMounted = true;
 
     const handleLateOffer = async () => {
@@ -239,7 +243,6 @@ function CallPageContent() {
         await pc.setLocalDescription(answer);
         
         try {
-          const target = participants?.find((p: any) => p._id !== myParticipant._id);
           if (target && isMounted) {
             await sendSignalMutation({
               callId: callId as Id<"calls">,
@@ -262,7 +265,7 @@ function CallPageContent() {
       isMounted = false;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [call?.offer, state.localStream, myParticipant]);
+  }, [call?.offer, state.localStream, myParticipant, participants]);
 
   // Handle Signals (Answer & ICE)
   const processedSignalsRef = useRef<Set<string>>(new Set());
