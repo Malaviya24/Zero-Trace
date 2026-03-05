@@ -167,6 +167,17 @@ export const updateOffer = mutation({
     const user = await getCurrentUser(ctx);
     if (!user) throw new Error("Unauthorized");
     
+    // Verify user is an active participant
+    const participant = await ctx.db
+      .query("callParticipants")
+      .withIndex("by_call_id", (q) => q.eq("callId", args.callId))
+      .filter((q) => q.eq(q.field("userId"), user._id))
+      .first();
+
+    if (!participant || participant.leftAt) {
+      throw new Error("You must be a participant to update the offer");
+    }
+
     await ctx.db.patch(args.callId, {
       offer: args.offer,
     });

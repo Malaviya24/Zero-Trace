@@ -22,6 +22,8 @@ function CallPageContent() {
   const { state, actions } = useCallStore();
   const hasJoinedRef = useRef(false);
   const isInitiatorRef = useRef(false);
+  const pcRef = useRef<RTCPeerConnection | null>(null);
+  pcRef.current = state.peerConnection;
 
   const call = useQuery((api as any).calls.get, callId ? { callId: callId as Id<"calls"> } : "skip");
   const participants = useQuery((api as any).calls.getParticipants, callId ? { callId: callId as Id<"calls"> } : "skip");
@@ -205,7 +207,7 @@ function CallPageContent() {
     joinAndSetup();
     
     return () => {
-      const pc = useCallStore.getState().peerConnection;
+      const pc = pcRef.current;
       if (pc) {
         pc.close();
         actions.setPeerConnection(null);
