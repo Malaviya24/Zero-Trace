@@ -9,7 +9,6 @@
  */
 
 import type * as auth from "../auth.js";
-import type * as auth_emailOtp from "../auth/emailOtp.js";
 import type * as callHistory from "../callHistory.js";
 import type * as calls from "../calls.js";
 import type * as connectionQuality from "../connectionQuality.js";
@@ -28,7 +27,6 @@ import type {
 
 declare const fullApi: ApiFromModules<{
   auth: typeof auth;
-  "auth/emailOtp": typeof auth_emailOtp;
   callHistory: typeof callHistory;
   calls: typeof calls;
   connectionQuality: typeof connectionQuality;

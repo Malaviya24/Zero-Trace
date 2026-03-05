@@ -18,8 +18,20 @@ export function CallNotification({ callId, callerName, roomId, displayName, onDi
 
   const handleJoinCall = () => {
     setIsJoining(true);
-    if (displayName) {
-      sessionStorage.setItem("call_display_name", displayName);
+    if (displayName?.trim()) {
+      sessionStorage.setItem("call_display_name", displayName.trim());
+    } else if (roomId) {
+      try {
+        const rawSession = localStorage.getItem(`room_session_${roomId}`);
+        if (rawSession) {
+          const parsed = JSON.parse(rawSession);
+          if (typeof parsed?.displayName === "string" && parsed.displayName.trim()) {
+            sessionStorage.setItem("call_display_name", parsed.displayName.trim());
+          }
+        }
+      } catch (error) {
+        console.warn("[Call] Failed to load display name from room session:", error);
+      }
     }
     if (roomId) {
       sessionStorage.setItem("call_room_id", roomId);

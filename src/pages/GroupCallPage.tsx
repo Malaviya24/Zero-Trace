@@ -68,6 +68,7 @@ function GroupCallPageContent() {
   const isProcessingRef = useRef(false);
   const peerSetupRef = useRef<Set<string>>(new Set());
   const cleanupTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const hasNavigatedRef = useRef(false);
 
   const call = useQuery(typedApi.calls.get, callId ? { callId: callId as Id<"calls"> } : "skip");
   const participants = useQuery(typedApi.calls.getParticipants, callId ? { callId: callId as Id<"calls"> } : "skip");
@@ -94,6 +95,35 @@ function GroupCallPageContent() {
   sendSignalRef.current = sendSignalMutation;
   const markProcessedRef = useRef(markProcessedMutation);
   markProcessedRef.current = markProcessedMutation;
+  const getReturnPath = useCallback(() => {
+    const sessionRoomId = sessionStorage.getItem("call_room_id");
+    const callRoomId = call?.roomId;
+    const resolvedRoomId = sessionRoomId || callRoomId || null;
+    if (resolvedRoomId) {
+      sessionStorage.setItem("call_room_id", resolvedRoomId);
+      return `/room/${resolvedRoomId}`;
+    }
+    return "/";
+  }, [call?.roomId]);
+  const resolveDisplayName = useCallback(() => {
+    const savedName = sessionStorage.getItem("call_display_name");
+    if (savedName?.trim()) return savedName.trim();
+    const roomId = call?.roomId;
+    if (roomId) {
+      try {
+        const rawSession = localStorage.getItem(`room_session_${roomId}`);
+        if (rawSession) {
+          const parsed = JSON.parse(rawSession);
+          if (typeof parsed?.displayName === "string" && parsed.displayName.trim()) {
+            return parsed.displayName.trim();
+          }
+        }
+      } catch (error) {
+        console.warn("[Call] Failed to read room session display name:", error);
+      }
+    }
+    return user?.name || "Anonymous";
+  }, [call?.roomId, user?.name]);
 
   useEffect(() => {
     if (callId && call && !hasJoinedRef.current) {
@@ -104,14 +134,15 @@ function GroupCallPageContent() {
         cleanupTimerRef.current = null;
       }
 
-      const savedName = sessionStorage.getItem("call_display_name");
-      const displayName = savedName || user?.name || `User ${Math.floor(Math.random() * 1000)}`;
+      const displayName = resolveDisplayName();
+      sessionStorage.setItem("call_display_name", displayName);
       actions.setDisplayName(displayName);
 
       joinCallMutation({
         callId: callId as Id<"calls">,
         displayName,
-      }).then((participantId) => {
+      }).then((result: any) => {
+        const participantId = result.participantId;
         console.log("[Call] Joined as:", displayName, "pid:", participantId);
         actions.setMyParticipantId(participantId as Id<"callParticipants">);
       }).catch(err => {
@@ -120,7 +151,7 @@ function GroupCallPageContent() {
         hasJoinedRef.current = false;
       });
     }
-  }, [callId, call, user, actions, joinCallMutation]);
+  }, [callId, call, actions, joinCallMutation, resolveDisplayName]);
 
   useEffect(() => {
     if (callId) {
@@ -135,21 +166,32 @@ function GroupCallPageContent() {
         peerSetupRef.current.clear();
         processedSignalsRef.current.clear();
         sessionStorage.removeItem("call_display_name");
-        sessionStorage.removeItem("call_room_id");
       }, 100);
     };
   }, [callId]);
 
   useEffect(() => {
     let intervalId: number | undefined;
-    const hasConnectedPeer = Array.from(state.peerConnections.values()).some(
-      (pc) => pc.pc.connectionState === "connected"
+    const hasConnectedPeer = state.status === "connected" || Array.from(state.peerConnections.values()).some(
+      (pc) => pc.pc.connectionState === "connected" || !!pc.remoteStream
     );
     if (hasConnectedPeer) {
       intervalId = window.setInterval(() => actions.incrementCallDuration(), 1000);
     }
     return () => { if (intervalId !== undefined) window.clearInterval(intervalId); };
-  }, [state.peerConnections, actions]);
+  }, [state.peerConnections, state.status, actions]);
+
+  useEffect(() => {
+    if (call?.status !== "ended" || hasNavigatedRef.current) return;
+    const targetPath = getReturnPath();
+    const timeoutId = window.setTimeout(() => {
+      if (hasNavigatedRef.current) return;
+      hasNavigatedRef.current = true;
+      actions.reset();
+      navigate(targetPath);
+    }, 1200);
+    return () => window.clearTimeout(timeoutId);
+  }, [call?.status, getReturnPath, actions, navigate]);
 
   const setupPeerConnection = useCallback((participantId: string) => {
     console.log(`[Call] Setting up peer for: ${participantId}`);
@@ -297,8 +339,12 @@ function GroupCallPageContent() {
 
         const pc = setupPeerConnection(pid);
 
-        const iJoinedAfter = (myParticipant.joinedAt || 0) > (participant.joinedAt || 0);
-        if (iJoinedAfter) {
+        const myJoinedAt = myParticipant.joinedAt || 0;
+        const otherJoinedAt = participant.joinedAt || 0;
+        const shouldCreateOffer =
+          myJoinedAt > otherJoinedAt ||
+          (myJoinedAt === otherJoinedAt && String(state.myParticipantId) > String(pid));
+        if (shouldCreateOffer) {
           console.log(`[Call] I joined after ${participant.displayName}, creating offer`);
           actions.setStatus("connecting");
 
@@ -327,7 +373,7 @@ function GroupCallPageContent() {
             }
           })();
         } else {
-          console.log(`[Call] I joined before ${participant.displayName}, waiting for their offer`);
+          console.log(`[Call] Waiting for offer from ${participant.displayName}`);
         }
       }
     });
@@ -457,18 +503,20 @@ function GroupCallPageContent() {
   }, [signals, state.myParticipantId, participants, callId, setupPeerConnection]);
 
   const handleEndCall = async () => {
-    const roomId = sessionStorage.getItem("call_room_id");
-
     if (callId) {
       try {
-        await leaveCallMutation({ callId: callId as Id<"calls"> });
+        await leaveCallMutation({
+          callId: callId as Id<"calls">,
+          participantId: state.myParticipantId || undefined,
+        });
       } catch (error) {
         console.error("[Call] Backend leave failed:", error);
       }
     }
 
     actions.reset();
-    navigate(roomId ? `/room/${roomId}` : "/");
+    hasNavigatedRef.current = true;
+    navigate(getReturnPath());
   };
 
   const handleToggleAudio = () => {
@@ -491,7 +539,7 @@ function GroupCallPageContent() {
             </div>
             <h2 className="text-2xl font-bold mb-2">Invalid Call</h2>
             <p className="text-muted-foreground mb-6 text-sm">No call ID provided.</p>
-            <Button onClick={() => navigate("/")} className="w-full" size="lg">
+            <Button onClick={() => navigate(getReturnPath())} className="w-full" size="lg">
               <ArrowLeft className="mr-2 h-4 w-4" /> Return Home
             </Button>
           </CardContent>
@@ -520,7 +568,7 @@ function GroupCallPageContent() {
             </div>
             <h2 className="text-2xl font-bold mb-2">Call Ended</h2>
             <p className="text-muted-foreground mb-6 text-sm">This call has ended or doesn't exist.</p>
-            <Button onClick={() => navigate("/")} className="w-full" size="lg">
+            <Button onClick={() => navigate(getReturnPath())} className="w-full" size="lg">
               <ArrowLeft className="mr-2 h-4 w-4" /> Return Home
             </Button>
           </CardContent>

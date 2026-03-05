@@ -50,7 +50,7 @@ export const createRoom = mutation({
 
       const user = await getCurrentUser(ctx);
       const now = Date.now();
-      const expiresAt = now + (2 * 60 * 60 * 1000); // 2 hours TTL
+      const expiresAt = now + (30 * 24 * 60 * 60 * 1000); // 30 days TTL
 
       const generateCode = () => {
         const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
@@ -490,7 +490,11 @@ export const kickParticipant = mutation({
 
 // Add: Clear all members (admin only, keep admin). Verify admin via callerParticipantId.
 export const clearParticipants = mutation({
-  args: { roomId: v.string(), callerParticipantId: v.id("participants") },
+  args: {
+    roomId: v.string(),
+    callerParticipantId: v.id("participants"),
+    panic: v.optional(v.boolean()),
+  },
   handler: async (ctx, args) => {
     try {
       const room = await ctx.db
@@ -517,38 +521,57 @@ export const clearParticipants = mutation({
         throw new Error("Only the admin can perform this action");
       }
 
-      // Nuclear Panic Fix: Delete every single trace of the room immediately
-      
-      // 1. Delete ALL Messages for this roomId
-      const messages = await ctx.db
-        .query("messages")
-        .withIndex("by_room_id", (q) => q.eq("roomId", args.roomId))
-        .collect();
-      for (const msg of messages) {
-        await ctx.db.delete(msg._id);
-      }
-
-      // 2. Delete ALL Participants for this roomId
       const allParticipants = await ctx.db
         .query("participants")
         .withIndex("by_room_id", (q) => q.eq("roomId", args.roomId))
         .collect();
+
+      if (!args.panic) {
+        for (const p of allParticipants) {
+          if (p.isActive && p.role !== "admin") {
+            await ctx.db.patch(p._id, { isActive: false, isTyping: false });
+          }
+        }
+        return { success: true, destroyed: false };
+      }
+
+      // PANIC MODE: Destructive wipe
+      const now = Date.now();
+      await ctx.db.patch(room._id, { isActive: false, expiresAt: now });
+
+      const roomMessages = await ctx.db
+        .query("messages")
+        .withIndex("by_room_id", (q) => q.eq("roomId", args.roomId))
+        .collect();
+      for (const m of roomMessages) await ctx.db.delete(m._id);
+
       for (const p of allParticipants) {
         await ctx.db.delete(p._id);
       }
 
-      // 3. Delete ALL Calls, Call Participants, and Signaling for this roomId
-      const callsInRoom = await ctx.db
+      const roomKeys = await ctx.db
+        .query("encryptionKeys")
+        .withIndex("by_room_id", (q) => q.eq("roomId", args.roomId))
+        .collect();
+      for (const k of roomKeys) await ctx.db.delete(k._id);
+
+      const attempts = await ctx.db
+        .query("joinAttempts")
+        .withIndex("by_room_and_failed_and_created_at", (q) => q.eq("roomId", args.roomId).eq("failed", true))
+        .collect();
+      for (const a of attempts) await ctx.db.delete(a._id);
+
+      const roomCalls = await ctx.db
         .query("calls")
         .withIndex("by_room_id", (q) => q.eq("roomId", args.roomId))
         .collect();
       
-      for (const call of callsInRoom) {
-        const callParts = await ctx.db
+      for (const call of roomCalls) {
+        const callParticipants = await ctx.db
           .query("callParticipants")
           .withIndex("by_call_id", (q) => q.eq("callId", call._id))
           .collect();
-        for (const cp of callParts) await ctx.db.delete(cp._id);
+        for (const cp of callParticipants) await ctx.db.delete(cp._id);
 
         const signals = await ctx.db
           .query("signaling")
@@ -559,36 +582,7 @@ export const clearParticipants = mutation({
         await ctx.db.delete(call._id);
       }
 
-      // 4. Delete ALL Encryption Keys for this roomId
-      const keys = await ctx.db
-        .query("encryptionKeys")
-        .withIndex("by_room_id", (q) => q.eq("roomId", args.roomId))
-        .collect();
-      for (const k of keys) {
-        await ctx.db.delete(k._id);
-      }
-
-      // 5. Delete ALL Join Attempts for this roomId
-      const attempts = await ctx.db
-        .query("joinAttempts")
-        .withIndex("by_expires_at") // Use expiresAt index since roomId index might be limited
-        .collect();
-      for (const att of attempts) {
-        if (att.roomId === args.roomId) {
-          await ctx.db.delete(att._id);
-        }
-      }
-
-      // 6. Finally, delete ALL room documents with this roomId
-      const rooms = await ctx.db
-        .query("rooms")
-        .withIndex("by_room_id", (q) => q.eq("roomId", args.roomId))
-        .collect();
-      for (const r of rooms) {
-        await ctx.db.delete(r._id);
-      }
-
-      return { success: true };
+      return { success: true, destroyed: true };
     } catch (e) {
       console.error("rooms.clearParticipants error:", e);
       if (e instanceof Error) throw e;

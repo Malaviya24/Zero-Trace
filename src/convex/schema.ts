@@ -137,6 +137,7 @@ const schema = defineSchema(
       endedAt: v.optional(v.number()), // when call ended
       e2ee: v.boolean(), // end-to-end encryption enabled
       expiresAt: v.number(), // TTL timestamp
+      offer: v.optional(v.string()), // Initial WebRTC offer
       // Phase 1: Scalability
       maxParticipants: v.optional(v.number()), // max participants for group calls
       sfuEnabled: v.optional(v.boolean()), // use SFU for group calls

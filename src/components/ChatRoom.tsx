@@ -63,6 +63,7 @@ export default function ChatRoom({ roomId, displayName, avatar, encryptionKey, p
   const updateActivityMutation = useMutation((api as any).rooms.updateActivity);
   const kickParticipantMutation = useMutation((api as any).rooms.kickParticipant);
   const clearParticipantsMutation = useMutation((api as any).rooms.clearParticipants);
+  const cleanupExpiredMutation = useMutation((api as any).rooms.cleanupExpired);
   const setTypingMutation = useMutation((api as any).rooms.setTyping);
 
   useEffect(() => {
@@ -84,6 +85,8 @@ export default function ChatRoom({ roomId, displayName, avatar, encryptionKey, p
   const [isClearingMembers, setIsClearingMembers] = useState(false);
   const [isCopyingInvite, setIsCopyingInvite] = useState(false);
   const [editingMessage, setEditingMessage] = useState<{ id: string; content: string } | null>(null);
+  const participantMissingSinceRef = useRef<number | null>(null);
+  const roomMissingSinceRef = useRef<number | null>(null);
 
   useEffect(() => {
     const root = document.documentElement;
@@ -113,29 +116,43 @@ export default function ChatRoom({ roomId, displayName, avatar, encryptionKey, p
     const meStillPresent = (participants as any[]).some(
       (p: any) => p._id === (participantId as any)
     );
-    if (!meStillPresent) {
+    if (meStillPresent) {
+      participantMissingSinceRef.current = null;
+      return;
+    }
+    participantMissingSinceRef.current = Date.now();
+    const timeoutId = window.setTimeout(() => {
+      if (participantMissingSinceRef.current === null) return;
       toast.error("You have been removed by the admin.");
       const sessionKey = `room_session_${roomId}`;
       try { localStorage.removeItem(sessionKey); } catch (e) { console.error("Failed to clear session:", e); }
       navigate("/");
-    }
+    }, 4000);
+    return () => window.clearTimeout(timeoutId);
   }, [participants, participantId, navigate, roomId]);
 
   // Add: Redirect if room is deleted (Panic Mode)
   useEffect(() => {
-    if (room === null) {
+    if (room !== null) {
+      roomMissingSinceRef.current = null;
+      return;
+    }
+    roomMissingSinceRef.current = Date.now();
+    const timeoutId = window.setTimeout(() => {
+      if (roomMissingSinceRef.current === null) return;
       toast.error("Room has been destroyed.");
       const sessionKey = `room_session_${roomId}`;
       try { localStorage.removeItem(sessionKey); } catch (e) {}
       navigate("/");
-    }
+    }, 3000);
+    return () => window.clearTimeout(timeoutId);
   }, [room, navigate, roomId]);
 
   const safeMarkRead = useCallback(
     async (messageId: Id<"messages">) => {
-      try { await markReadMutation({ messageId }); } catch (e) { console.error("Failed to mark message as read:", e); }
+      try { await markReadMutation({ messageId, participantId: participantId as any }); } catch (e) { console.error("Failed to mark message as read:", e); }
     },
-    [markReadMutation]
+    [markReadMutation, participantId]
   );
 
   const isAdmin = useMemo(() => {
@@ -168,14 +185,27 @@ export default function ChatRoom({ roomId, displayName, avatar, encryptionKey, p
     return () => clearInterval(interval);
   }, [roomId, updateActivityMutation]);
 
+  // Periodic cleanup trigger
+  useEffect(() => {
+    cleanupExpiredMutation({}).catch(() => {});
+    const interval = setInterval(() => {
+      cleanupExpiredMutation({}).catch(() => {});
+    }, 60000);
+    return () => clearInterval(interval);
+  }, [cleanupExpiredMutation]);
+
   const handlePanicMode = useCallback(async () => {
+    if (!window.confirm("ARE YOU SURE? This will permanently destroy the room and all data. This action cannot be undone.")) {
+      return;
+    }
     setPanicMode(true);
     setIsClearing(true);
     try {
       // Consolidate into a single "Nuclear Panic" mutation that deletes everything
       await clearParticipantsMutation({ 
         roomId, 
-        callerParticipantId: participantId as any 
+        callerParticipantId: participantId as any,
+        panic: true,
       });
       
       const sessionKey = `room_session_${roomId}`;
@@ -191,13 +221,7 @@ export default function ChatRoom({ roomId, displayName, avatar, encryptionKey, p
     }
   }, [clearParticipantsMutation, roomId, navigate, participantId]);
 
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === "Escape") handlePanicMode();
-    };
-    window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [handlePanicMode]);
+  // Panic Mode Listener Removed per user request
 
   const handleSendMessage = async (messageText: string) => {
     if (!encryptionKey) return;
@@ -316,7 +340,11 @@ export default function ChatRoom({ roomId, displayName, avatar, encryptionKey, p
   const handleClearMembers = async () => {
     try {
       setIsClearingMembers(true);
-      await clearParticipantsMutation({ roomId, callerParticipantId: participantId as any });
+      await clearParticipantsMutation({ 
+        roomId, 
+        callerParticipantId: participantId as any,
+        panic: false,
+      });
       toast.success("Members cleared");
     } catch (e: any) {
       toast.error(e?.message || "Failed to clear members");
@@ -335,7 +363,15 @@ export default function ChatRoom({ roomId, displayName, avatar, encryptionKey, p
     }
   };
 
-  if (!room) {
+  if (room === undefined) {
+    return (
+      <div className="h-dvh flex items-center justify-center bg-background">
+        <Loader2 className="h-6 w-6 animate-spin text-primary" />
+      </div>
+    );
+  }
+
+  if (room === null) {
     return (
       <div className="h-dvh flex items-center justify-center bg-background">
         <div className="text-center p-8 max-w-sm">

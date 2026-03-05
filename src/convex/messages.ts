@@ -101,11 +101,18 @@ export const getRoomMessages = query({
       }
 
       // Change to ascending order like WhatsApp
-      return await ctx.db
+      const allMessages = await ctx.db
         .query("messages")
         .withIndex("by_room_id", (q) => q.eq("roomId", args.roomId))
         .order("asc")
-        .take(limit);
+        .collect();
+
+      const now = Date.now();
+      const visible = allMessages.filter(
+        (m) => m.expiresAt > now && (!m.selfDestructAt || m.selfDestructAt > now)
+      );
+
+      return visible.slice(Math.max(0, visible.length - limit));
     } catch (e) {
       handleConvexError("messages.getRoomMessages", e);
     }
@@ -114,22 +121,20 @@ export const getRoomMessages = query({
 
 // Mark message as read
 export const markMessageRead = mutation({
-  args: { messageId: v.id("messages") },
+  args: {
+    messageId: v.id("messages"),
+    participantId: v.id("participants"),
+  },
   handler: async (ctx, args) => {
     try {
       const message = await ctx.db.get(args.messageId);
       if (!message) return;
 
       // Ensure caller is a participant of the message's room
-      const user = await getCurrentUser(ctx);
-      const participant = await ctx.db
-        .query("participants")
-        .withIndex("by_room_and_user", (q) =>
-          q.eq("roomId", message.roomId).eq("userId", user?._id)
-        )
-        .filter((q) => q.eq(q.field("isActive"), true))
-        .first();
-      if (!participant) return;
+      const participant = await ctx.db.get(args.participantId);
+      if (!participant || participant.roomId !== message.roomId || !participant.isActive) {
+        return;
+      }
 
       const now = Date.now();
       await ctx.db.patch(args.messageId, {
