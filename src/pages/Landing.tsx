@@ -5,37 +5,27 @@ import {
   Eye,
   Timer,
   Key,
-  Users,
   Zap,
   Lock,
   AlertTriangle,
   ArrowRight,
   Plus,
-  LogIn,
-  MessageSquare,
   Loader2,
   Sun,
   Moon,
-  QrCode,
   Menu,
   ChevronDown,
 } from "lucide-react";
 import { useNavigate } from "react-router";
-import { useState, useRef, useEffect } from "react";
+import { useState, useEffect } from "react";
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 
-import { motion, useScroll, useTransform, AnimatePresence } from "framer-motion";
+import { motion, AnimatePresence } from "framer-motion";
 import { QRScanner } from "@/components/QRScanner";
 
 export default function Landing() {
   const navigate = useNavigate();
-  const [isOpeningCreate, setIsOpeningCreate] = useState(false);
-  const [isJoining, setIsJoining] = useState(false);
-  const [joinRoomId, setJoinRoomId] = useState("");
-  const [joinPassword, setJoinPassword] = useState("");
-  const [isJoiningInline, setIsJoiningInline] = useState(false);
+  const isOpeningCreate = false;
   const [isDark, setIsDark] = useState<boolean>(false);
   const [showQRScanner, setShowQRScanner] = useState(false);
   const [openFaq, setOpenFaq] = useState<number | null>(null);
@@ -55,14 +45,7 @@ export default function Landing() {
     }
   };
 
-  const containerRef = useRef<HTMLDivElement>(null);
-  const { scrollYProgress } = useScroll({
-    target: containerRef,
-    offset: ["start start", "end end"],
-  });
-  const blobY = useTransform(scrollYProgress, [0, 1], [0, 140]);
-  const blobY2 = useTransform(scrollYProgress, [0, 1], [0, -120]);
-  const spotlightOpacity = useTransform(scrollYProgress, [0, 1], [0.2, 0.08]);
+  const spotlightOpacity = 0.2;
 
   const features = [
     {
@@ -134,82 +117,35 @@ export default function Landing() {
   ];
 
   return (
-    <div
-      ref={containerRef}
-      className="relative min-h-screen overflow-hidden bg-gradient-to-br from-background via-background to-muted/20"
-    >
-      {/* Animated gradient orbs */}
-      <motion.div
-        initial={{ opacity: 0 }}
-        animate={{ opacity: 0.3 }}
-        transition={{ duration: 1.2 }}
-        style={{ y: blobY }}
-        className="pointer-events-none absolute -top-32 -left-32 h-[28rem] w-[28rem] rounded-full bg-gradient-to-br from-primary/30 via-purple-500/20 to-transparent blur-3xl"
-      />
-      <motion.div
-        initial={{ opacity: 0 }}
-        animate={{ opacity: 0.25 }}
-        transition={{ duration: 1.5 }}
-        style={{ y: blobY2 }}
-        className="pointer-events-none absolute -bottom-32 -right-32 h-[32rem] w-[32rem] rounded-full bg-gradient-to-tl from-fuchsia-500/25 via-purple-500/15 to-transparent blur-3xl"
-      />
-      <motion.div
-        initial={{ opacity: 0, scale: 0.8 }}
-        animate={{ opacity: 0.15, scale: 1 }}
-        transition={{ duration: 2, repeat: Infinity, repeatType: "reverse", ease: "easeInOut" }}
-        className="pointer-events-none absolute top-1/3 left-1/2 -translate-x-1/2 h-[20rem] w-[20rem] rounded-full bg-gradient-to-r from-violet-500/20 to-indigo-500/20 blur-3xl"
-      />
-
-      {/* Header */}
-      <motion.div
-        initial={{ opacity: 0, y: -20 }}
-        animate={{ opacity: 1, y: 0 }}
-        className="sticky top-0 z-50 border-b glass"
+    <div className="min-h-screen bg-background text-foreground overflow-x-hidden relative font-sans">
+      <div className="pointer-events-none fixed inset-0 z-50 transition-colors duration-500 pointer-events-none" />
+      
+      {/* Navigation */}
+      <motion.nav 
+        className="fixed top-0 w-full z-40 border-b bg-background/80 backdrop-blur supports-[backdrop-filter]:bg-background/60"
+        initial={{ y: -100 }}
+        animate={{ y: 0 }}
+        transition={{ duration: 0.5 }}
       >
-        <div className="max-w-6xl mx-auto px-4 sm:px-6 py-4 flex items-center justify-between">
-          <motion.button
-            whileHover={{ scale: 1.02 }}
-            whileTap={{ scale: 0.98 }}
-            onClick={() => navigate("/")}
-            className="flex items-center gap-3"
-          >
-            <div className="flex flex-col items-start leading-tight">
-              <span className="font-extrabold text-xl tracking-tight gradient-text">
-                Zero-Trace
-              </span>
-              <span className="text-[11px] text-muted-foreground/80">Ephemeral Chat</span>
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 h-16 flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <div className="relative h-8 w-8 bg-gradient-to-br from-primary to-purple-600 rounded-lg flex items-center justify-center shadow-lg shadow-primary/25">
+              <Shield className="h-5 w-5 text-white" />
+              <div className="absolute -bottom-1 -right-1 h-3 w-3 bg-green-500 rounded-full border-2 border-background animate-pulse" />
             </div>
-          </motion.button>
+            <span className="font-bold text-xl tracking-tight bg-clip-text text-transparent bg-gradient-to-r from-foreground to-foreground/70">
+              Zero Trace
+            </span>
+          </div>
 
-          <div className="hidden sm:flex items-center gap-3">
+          <div className="hidden sm:flex items-center gap-4">
             <Button
               variant="ghost"
-              size="icon"
-              onClick={toggleTheme} 
-              aria-label="Toggle dark mode"
-              className="rounded-full"
+              size="sm"
+              onClick={toggleTheme}
+              className="rounded-full w-9 h-9 p-0"
             >
               {isDark ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
-            </Button>
-
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => navigate("/join")}
-              disabled={isJoining}
-              className="rounded-full transition-transform active:scale-[0.98]"
-            >
-              {isJoining ? (
-                <>
-                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                  Opening...
-                </>
-              ) : (
-                <>
-                  <ArrowRight className="mr-2 h-4 w-4" />
-                  Join Room
-                </>
-              )}
             </Button>
             <Button
               size="sm"
@@ -254,24 +190,6 @@ export default function Landing() {
                 </SheetHeader>
                 <div className="mt-6 space-y-3 px-1">
                   <Button
-                    variant="outline"
-                    className="w-full justify-start rounded-xl h-12"
-                    onClick={() => navigate("/join")}
-                    disabled={isJoining}
-                  >
-                    {isJoining ? (
-                      <>
-                        <Loader2 className="mr-3 h-4 w-4 animate-spin" />
-                        Opening...
-                      </>
-                    ) : (
-                      <>
-                        <ArrowRight className="mr-3 h-4 w-4" />
-                        Join Room
-                      </>
-                    )}
-                  </Button>
-                  <Button
                     className="w-full justify-start rounded-xl h-12 bg-gradient-to-r from-primary to-purple-600 hover:from-primary/90 hover:to-purple-600/90 text-white border-0"
                     onClick={() => navigate("/create")}
                     disabled={isOpeningCreate}
@@ -293,10 +211,10 @@ export default function Landing() {
             </Sheet>
           </div>
         </div>
-      </motion.div>
+      </motion.nav>
 
       {/* Hero Section */}
-      <div className="relative max-w-6xl mx-auto px-4 sm:px-6 pt-16 sm:pt-24 lg:pt-32 pb-16 sm:pb-20 lg:pb-28">
+      <div className="relative max-w-6xl mx-auto px-4 sm:px-6 pt-24 sm:pt-32 lg:pt-40 pb-16 sm:pb-20 lg:pb-28">
         <motion.div className="pointer-events-none absolute inset-0 -z-10 hidden sm:block">
           <motion.div
             style={{ opacity: spotlightOpacity }}
@@ -347,15 +265,6 @@ export default function Landing() {
               >
                 Create Room
                 <ArrowRight className="ml-2 h-5 w-5" />
-              </Button>
-              <Button
-                size="lg"
-                variant="outline"
-                className="text-base sm:text-lg px-8 py-6 h-14 rounded-xl glass border-primary/20 hover:border-primary/40"
-                onClick={() => navigate("/join")}
-              >
-                Join Room
-                <Users className="ml-2 h-5 w-5" />
               </Button>
             </motion.div>
 

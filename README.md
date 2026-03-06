@@ -1,8 +1,8 @@
-# Chattrix
+# Zero-Trace
 
 **Secure, anonymous chat rooms with end-to-end encryption and real-time voice calls.**
 
-Chattrix lets anyone create or join encrypted chat rooms without signing up. Messages are encrypted client-side, identities are anonymous, and rooms can be shared via link or QR code. Built-in WebRTC calling brings voice communication directly into the chat.
+Zero-Trace lets anyone create or join encrypted chat rooms without signing up. Messages are encrypted client-side, identities are anonymous, and rooms can be shared via link or QR code. Built-in WebRTC calling brings voice communication directly into the chat.
 
 [![Live Demo](https://img.shields.io/badge/Live-Demo-7c3aed?style=for-the-badge)](https://chattrix.replit.app)
 [![Built with React](https://img.shields.io/badge/React-19-61dafb?style=flat-square&logo=react)](https://react.dev)
@@ -68,8 +68,8 @@ Chattrix lets anyone create or join encrypted chat rooms without signing up. Mes
 
 ```bash
 # Clone the repository
-git clone https://github.com/yourusername/chattrix.git
-cd chattrix
+git clone https://github.com/yourusername/zero-trace.git
+cd zero-trace
 
 # Install dependencies
 pnpm install

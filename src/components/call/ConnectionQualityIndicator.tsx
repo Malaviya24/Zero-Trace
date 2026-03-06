@@ -1,5 +1,5 @@
 import { Badge } from "@/components/ui/badge";
-import { Wifi, WifiOff, Signal, SignalHigh, SignalLow, SignalMedium } from "lucide-react";
+import { WifiOff, Signal, SignalHigh, SignalLow, SignalMedium } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 interface ConnectionQualityIndicatorProps {

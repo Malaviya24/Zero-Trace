@@ -11,7 +11,10 @@ export function DeviceSelector() {
         <Label htmlFor="microphone">Microphone</Label>
         <Select
           value={state.selectedDevices.audioInput}
-          onValueChange={(value) => actions.setSelectedDevice("audioInput", value)}
+          onValueChange={(value) => {
+            actions.setSelectedDevice("audioInput", value);
+            actions.startLocalMedia({ audioInputId: value });
+          }}
         >
           <SelectTrigger id="microphone">
             <SelectValue placeholder="Select microphone" />

@@ -10,11 +10,13 @@ import { Badge } from "@/components/ui/badge";
 import { AlertCircle } from "lucide-react";
 import { useMutation, useQuery } from "convex/react";
 import { api } from "@/convex/_generated/api";
-import { Id } from "@/convex/_generated/dataModel";
+import { Doc, Id } from "@/convex/_generated/dataModel";
 import { cn } from "@/lib/utils";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Phone } from "lucide-react";
+import { typedApi } from "@/lib/api-types";
+import { parseSignalPayload } from "@/call/signalingPayload";
 
 interface CallPanelProps {
   callId: string;
@@ -30,22 +32,28 @@ export function CallPanel({ callId, onEndCall }: CallPanelProps) {
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const animationFrameRef = useRef<number | null>(null);
 
-  const call = useQuery((api as any).calls.get, { callId: callId as Id<"calls"> });
-  const participants = useQuery((api as any).calls.getParticipants, { callId: callId as Id<"calls"> });
-  const myParticipant = participants?.find((p: any) => p.displayName === state.displayName);
-  const signals = useQuery(
-    (api as any).signaling.getSignals, 
+  const call = useQuery(typedApi.calls.get, { callId: callId as Id<"calls"> });
+  const participantsQuery = useQuery(typedApi.calls.getParticipants, { callId: callId as Id<"calls"> });
+  const participants = participantsQuery as Doc<"callParticipants">[] | undefined;
+  const currentUser = useQuery(api.users.currentUser, {});
+  const myParticipant = participants?.find((p: Doc<"callParticipants">) =>
+    currentUser?._id ? p.userId === currentUser._id : p.displayName === state.displayName
+  );
+  const signalsQuery = useQuery(
+    typedApi.signaling.getSignals, 
     myParticipant?._id ? { 
       callId: callId as Id<"calls">,
       participantId: myParticipant._id 
     } : "skip"
   );
+  const signals = signalsQuery as Doc<"signaling">[] | undefined;
   
-  const sendSignalMutation = useMutation((api as any).signaling.sendSignal);
-  const markProcessedMutation = useMutation((api as any).signaling.markProcessed);
-  const logCallEventMutation = useMutation((api as any).callHistory.logCallEvent);
-  const updateConnectionQualityMutation = useMutation((api as any).connectionQuality.updateConnectionQuality);
-  const trackReconnectionMutation = useMutation((api as any).connectionQuality.trackReconnection);
+  const sendSignalMutation = useMutation(typedApi.signaling.sendSignal);
+  const markProcessedMutation = useMutation(typedApi.signaling.markProcessed);
+  const logCallEventMutation = useMutation(api.callHistory.logCallEvent);
+  const updateConnectionQualityMutation = useMutation(api.connectionQuality.updateConnectionQuality);
+  const trackReconnectionMutation = useMutation(api.connectionQuality.trackReconnection);
+  const targetParticipantId = participants?.find((p: Doc<"callParticipants">) => p._id !== myParticipant?._id)?._id;
 
   // Initialize devices and media
   useEffect(() => {
@@ -319,13 +327,14 @@ export function CallPanel({ callId, onEndCall }: CallPanelProps) {
     });
 
     pc.onicecandidate = async (event) => {
-      if (event.candidate && myParticipant) {
+      if (event.candidate && myParticipant && targetParticipantId) {
         try {
           await sendSignalMutation({
             callId: callId as Id<"calls">,
             type: "ice-candidate",
             data: JSON.stringify(event.candidate),
             fromParticipantId: myParticipant._id,
+            toParticipantId: targetParticipantId,
           });
         } catch (error) {
           console.error("Failed to send ICE candidate:", error);
@@ -384,6 +393,7 @@ export function CallPanel({ callId, onEndCall }: CallPanelProps) {
           type: "offer",
           data: JSON.stringify(offer),
           fromParticipantId: myParticipant._id,
+          toParticipantId: targetParticipantId as Id<"callParticipants">,
         });
       } catch (error) {
         console.error("Failed to create offer:", error);
@@ -411,10 +421,10 @@ export function CallPanel({ callId, onEndCall }: CallPanelProps) {
     const processSignals = async () => {
       for (const signal of signals) {
         try {
-          console.log("Processing signal:", signal.type, "from:", signal.fromUserId);
-          const data = JSON.parse(signal.data);
+          console.log("Processing signal:", signal.type, "from:", signal.fromParticipantId);
 
           if (signal.type === "offer") {
+            const parsed = parseSignalPayload("offer", signal.data);
             let pc = state.peerConnection;
             if (!pc) {
               console.log("Creating peer connection to handle offer");
@@ -424,7 +434,7 @@ export function CallPanel({ callId, onEndCall }: CallPanelProps) {
 
             actions.setStatus("connecting");
             console.log("Setting remote description (offer)");
-            await pc.setRemoteDescription(new RTCSessionDescription(data));
+            await pc.setRemoteDescription(new RTCSessionDescription(parsed.payload));
             
             console.log("Creating answer");
             const answer = await pc.createAnswer();
@@ -436,13 +446,16 @@ export function CallPanel({ callId, onEndCall }: CallPanelProps) {
               type: "answer",
               data: JSON.stringify(answer),
               fromParticipantId: myParticipant._id,
+              toParticipantId: signal.fromParticipantId,
             });
           } else if (signal.type === "answer" && state.peerConnection) {
+            const parsed = parseSignalPayload("answer", signal.data);
             console.log("Setting remote description (answer)");
-            await state.peerConnection.setRemoteDescription(new RTCSessionDescription(data));
+            await state.peerConnection.setRemoteDescription(new RTCSessionDescription(parsed.payload));
           } else if (signal.type === "ice-candidate" && state.peerConnection) {
+            const parsed = parseSignalPayload("ice-candidate", signal.data);
             console.log("Adding ICE candidate");
-            await state.peerConnection.addIceCandidate(new RTCIceCandidate(data));
+            await state.peerConnection.addIceCandidate(new RTCIceCandidate(parsed.payload));
           }
 
           await markProcessedMutation({ signalId: signal._id, participantId: myParticipant._id });
@@ -458,7 +471,7 @@ export function CallPanel({ callId, onEndCall }: CallPanelProps) {
   }, [signals, myParticipant, state.peerConnection, callId, sendSignalMutation, markProcessedMutation, actions]);
 
   // Get remote participant name
-  const remoteParticipant = participants?.find((p: any) => p._id !== myParticipant?._id);
+  const remoteParticipant = participants?.find((p: Doc<"callParticipants">) => p._id !== myParticipant?._id);
   const remoteDisplayName = remoteParticipant?.displayName || "Connecting...";
 
   // Prepare participant list data
@@ -685,7 +698,6 @@ export function CallPanel({ callId, onEndCall }: CallPanelProps) {
         {showChat && (
           <div className="w-80 h-full animate-in slide-in-from-right duration-300">
             <CallChat 
-              callId={callId}
               roomId={call?.roomId}
               displayName={state.displayName || "Anonymous"}
             />

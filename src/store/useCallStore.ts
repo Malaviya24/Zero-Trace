@@ -171,7 +171,7 @@ interface CallContextType {
     resetReconnectAttempts: () => void;
     reset: () => void;
     initDevices: () => Promise<void>;
-    startLocalMedia: () => Promise<void>;
+    startLocalMedia: (override?: { audioInputId?: string; videoInputId?: string; video?: boolean }) => Promise<void>;
     stopLocalMedia: () => void;
     startScreenShare: () => Promise<void>;
     stopScreenShare: () => void;
@@ -260,50 +260,59 @@ export function CallProvider({ children }: { children: ReactNode }) {
       }
     },
 
-    startLocalMedia: async () => {
-      // Prevent starting if already have an active stream
-      if (state.localStream && state.localStream.active) {
-        console.log("✅ Local stream already active, skipping");
-        return;
-      }
-      
-      // Clean up any existing inactive streams
+    startLocalMedia: async (override?: { audioInputId?: string; videoInputId?: string; video?: boolean }) => {
+      const audioInputId = override?.audioInputId ?? state.selectedDevices.audioInput;
+      const videoInputId = override?.videoInputId ?? state.selectedDevices.videoInput;
+      const shouldEnableVideo = override?.video ?? state.isVideoEnabled; // Respect passed override or current state
+
       if (state.localStream) {
-        console.log("🧹 Cleaning up inactive local stream");
         state.localStream.getTracks().forEach(track => track.stop());
+        dispatch({ type: "SET_LOCAL_STREAM", payload: null });
       }
-      
+
       try {
         const constraints: MediaStreamConstraints = {
-          audio: state.selectedDevices.audioInput
-            ? { 
-                deviceId: { exact: state.selectedDevices.audioInput },
+          audio: audioInputId
+            ? {
+                deviceId: { exact: audioInputId },
                 echoCancellation: true,
                 noiseSuppression: true,
                 autoGainControl: true,
+                channelCount: 1,
+                sampleRate: 48000,
+                sampleSize: 16,
               }
             : {
                 echoCancellation: true,
                 noiseSuppression: true,
                 autoGainControl: true,
+                channelCount: 1,
+                sampleRate: 48000,
+                sampleSize: 16,
               },
-          video: false, // Audio-only for voice calls (WhatsApp/Telegram style)
+          video: shouldEnableVideo
+            ? videoInputId
+              ? { deviceId: { exact: videoInputId }, width: { ideal: 1280 }, height: { ideal: 720 }, frameRate: { ideal: 30 } }
+              : { width: { ideal: 1280 }, height: { ideal: 720 }, frameRate: { ideal: 30 }, facingMode: "user" }
+            : false,
         };
 
-        console.log("🎤 Requesting user media (audio only):", constraints);
         const stream = await navigator.mediaDevices.getUserMedia(constraints);
-        console.log("✅ Got local audio stream with tracks:", stream.getTracks().map(t => `${t.kind}: ${t.enabled}, readyState: ${t.readyState}`));
         
-        // Verify tracks are live
-        const allTracksLive = stream.getTracks().every(t => t.readyState === "live");
-        if (!allTracksLive) {
-          console.error("❌ Some tracks are not live:", stream.getTracks().map(t => `${t.kind}: ${t.readyState}`));
-        }
-        
+        // Initial state sync
+        stream.getAudioTracks().forEach(t => t.enabled = state.isAudioEnabled);
+        stream.getVideoTracks().forEach(t => t.enabled = shouldEnableVideo);
+
         dispatch({ type: "SET_LOCAL_STREAM", payload: stream });
+        if (shouldEnableVideo !== state.isVideoEnabled) {
+          // Sync store state if we forced video on.
+          if (shouldEnableVideo) {
+            dispatch({ type: "TOGGLE_VIDEO" });
+          }
+        }
       } catch (error) {
-        console.error("❌ Failed to get user media:", error);
-        dispatch({ type: "SET_ERROR", payload: `Failed to access microphone: ${error instanceof Error ? error.message : 'Unknown error'}` });
+        console.error("Failed to get user media:", error);
+        dispatch({ type: "SET_ERROR", payload: `Failed to access devices: ${error instanceof Error ? error.message : "Unknown error"}` });
       }
     },
 

@@ -17,9 +17,9 @@ app.use("*", async (c, next) => {
     "Content-Security-Policy",
     [
       "default-src 'self'",
-      "script-src 'self' 'unsafe-inline' 'unsafe-eval'",
+      "script-src 'self'",
       "style-src 'self' 'unsafe-inline'",
-      "img-src 'self' data: blob:",
+      "img-src 'self' data: blob: https://*",
       "connect-src 'self' https://*.convex.cloud wss://*.convex.cloud https://*.metered.ca https://*.expressturn.com stun: turn:",
       "media-src 'self' blob:",
       "font-src 'self'",

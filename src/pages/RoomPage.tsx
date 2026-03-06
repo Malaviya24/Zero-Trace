@@ -1,6 +1,6 @@
 import { useParams, useLocation } from "react-router";
 import { useRoomSession } from "@/hooks/useRoomSession";
-import ChatRoom from "@/components/ChatRoom";
+import CometChatRoom from "@/components/cometchat/CometChatRoom";
 import JoinRoom from "@/components/JoinRoom";
 import { LoadingScreen } from "@/components/LoadingScreen";
 
@@ -8,7 +8,7 @@ export default function RoomPage() {
   const { roomId } = useParams<{ roomId: string }>();
   const location = useLocation();
   
-  const { roomService, isRestoring, sessionData, hasUrlKey } = useRoomSession(
+  const { isRestoring, sessionData } = useRoomSession(
     roomId,
     location.hash
   );
@@ -25,10 +25,9 @@ export default function RoomPage() {
 
   if (sessionData && sessionData.participantId && roomId) {
     return (
-      <ChatRoom
+      <CometChatRoom
         roomId={roomId}
         displayName={sessionData.displayName}
-        avatar={sessionData.avatar}
         encryptionKey={sessionData.encryptionKey}
         participantId={sessionData.participantId}
       />

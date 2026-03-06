@@ -29,6 +29,7 @@ export function CallButton({ roomId, displayName }: CallButtonProps) {
 
       sessionStorage.setItem("call_display_name", name);
       sessionStorage.setItem("call_room_id", roomId);
+      sessionStorage.setItem("outgoing_call_id", String(callId));
 
       navigate(`/call/${callId}`);
     } catch (error) {

@@ -10,19 +10,31 @@ import { api } from "@/convex/_generated/api";
 import { Id } from "@/convex/_generated/dataModel";
 
 interface CallChatProps {
-  callId: string;
   roomId?: string;
   displayName: string;
   className?: string;
 }
 
-export function CallChat({ callId, roomId, displayName, className }: CallChatProps) {
+export function CallChat({ roomId, displayName, className }: CallChatProps) {
   const [message, setMessage] = useState("");
   const scrollRef = useRef<HTMLDivElement>(null);
+  const resolvedRoomId = roomId || sessionStorage.getItem("call_room_id") || undefined;
+  const participantId = resolvedRoomId
+    ? (() => {
+        try {
+          const raw = localStorage.getItem(`room_session_${resolvedRoomId}`);
+          if (!raw) return null;
+          const parsed = JSON.parse(raw);
+          return typeof parsed?.participantId === "string" ? parsed.participantId : null;
+        } catch {
+          return null;
+        }
+      })()
+    : null;
   
   const messages = useQuery(
     (api as any).messages.getRoomMessages,
-    roomId ? { roomId, limit: 100 } : "skip"
+    resolvedRoomId ? { roomId: resolvedRoomId, limit: 500 } : "skip"
   );
   
   const sendMessageMutation = useMutation((api as any).messages.sendMessage);
@@ -35,14 +47,14 @@ export function CallChat({ callId, roomId, displayName, className }: CallChatPro
   }, [messages]);
 
   const handleSend = async () => {
-    if (!message.trim() || !roomId) return;
+    if (!message.trim() || !resolvedRoomId || !participantId) return;
 
     try {
       await sendMessageMutation({
-        roomId,
+        roomId: resolvedRoomId,
         content: message.trim(),
         encryptionKeyId: "call-chat",
-        participantId: callId as Id<"participants">,
+        participantId: participantId as Id<"participants">,
       });
       setMessage("");
     } catch (error) {
@@ -73,7 +85,7 @@ export function CallChat({ callId, roomId, displayName, className }: CallChatPro
 
       <ScrollArea className="flex-1 p-4" ref={scrollRef}>
         <div className="space-y-3">
-          {!roomId ? (
+          {!resolvedRoomId ? (
             <div className="text-center text-muted-foreground text-sm py-8">
               Chat is only available for calls within a room
             </div>
@@ -118,14 +130,14 @@ export function CallChat({ callId, roomId, displayName, className }: CallChatPro
             value={message}
             onChange={(e) => setMessage(e.target.value)}
             onKeyPress={handleKeyPress}
-            placeholder={roomId ? "Type a message..." : "Chat unavailable"}
-            disabled={!roomId}
+            placeholder={resolvedRoomId ? "Type a message..." : "Chat unavailable"}
+            disabled={!resolvedRoomId}
             className="flex-1"
             autoComplete="off"
           />
           <Button
             onClick={handleSend}
-            disabled={!message.trim() || !roomId}
+            disabled={!message.trim() || !resolvedRoomId || !participantId}
             size="icon"
           >
             <Send className="h-4 w-4" />

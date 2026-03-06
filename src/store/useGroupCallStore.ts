@@ -156,7 +156,11 @@ export const useGroupCallStore = create<GroupCallState & { actions: GroupCallAct
       const peerConn = state.peerConnections.get(participantId);
       if (peerConn) {
         console.log(`[Call] Removing peer connection: ${participantId}`);
-        try { peerConn.pc.close(); } catch {}
+        try {
+          peerConn.pc.close();
+        } catch (error) {
+          console.warn("[Call] Failed to close peer connection:", error);
+        }
         const newMap = new Map(state.peerConnections);
         newMap.delete(participantId);
         set({ peerConnections: newMap });
@@ -235,7 +239,11 @@ export const useGroupCallStore = create<GroupCallState & { actions: GroupCallAct
     reset: () => {
       const state = get();
       state.peerConnections.forEach((peerConn) => {
-        try { peerConn.pc.close(); } catch {}
+        try {
+          peerConn.pc.close();
+        } catch (error) {
+          console.warn("[Call] Failed to close peer connection during reset:", error);
+        }
       });
       get().actions.stopLocalMedia();
       set({ ...initialState, peerConnections: new Map() });

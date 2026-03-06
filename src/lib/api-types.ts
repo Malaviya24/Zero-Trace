@@ -22,6 +22,7 @@ export const typedApi = {
     markMessageRead: api.messages.markMessageRead as FunctionReference<"mutation">,
     editMessage: api.messages.editMessage as FunctionReference<"mutation">,
     clearRoomMessages: api.messages.clearRoomMessages as FunctionReference<"mutation">,
+    toggleReaction: api.messages.toggleReaction as FunctionReference<"mutation">,
   },
   calls: {
     create: api.calls.create,
@@ -29,6 +30,8 @@ export const typedApi = {
     join: api.calls.join,
     leave: api.calls.leave,
     end: api.calls.end,
+    updateOffer: api.calls.updateOffer,
+    rejectInvite: api.calls.rejectInvite,
     getParticipants: api.calls.getParticipants,
     listByRoom: api.calls.listByRoom,
   },

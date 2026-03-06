@@ -1,12 +1,6 @@
-import { useEffect, useState } from "react";
 import { motion } from "framer-motion";
 
-interface CallBackgroundProps {
-  participantName: string;
-  isConnected: boolean;
-}
-
-export function CallBackground({ participantName, isConnected }: CallBackgroundProps) {
+export function CallBackground() {
   return (
     <div className="absolute inset-0 overflow-hidden">
       {/* Gradient background similar to WhatsApp */}

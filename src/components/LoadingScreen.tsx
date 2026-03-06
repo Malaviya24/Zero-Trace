@@ -1,5 +1,5 @@
 import { motion, AnimatePresence } from "framer-motion";
-import { Shield, Lock, MessageSquare } from "lucide-react";
+import { Shield, Lock } from "lucide-react";
 
 interface LoadingScreenProps {
   message?: string;

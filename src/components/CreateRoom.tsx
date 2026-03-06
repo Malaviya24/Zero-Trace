@@ -12,28 +12,27 @@ import {
   Shield,
   Eye,
   Timer,
-  Users,
   Key,
   Copy,
-  QrCode,
   ArrowRight,
   Loader2,
 } from "lucide-react";
 import { useState, useEffect } from "react";
 import { useMutation } from "@/lib/convex-helpers";
 import { toast } from "sonner";
-import { useNavigate } from "react-router";
+import { useNavigate, useLocation } from "react-router";
 import QRCode from "qrcode";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 
 export default function CreateRoom() {
   const navigate = useNavigate();
-  const [roomName, setRoomName] = useState("");
+  const location = useLocation();
+  const [roomName, setRoomName] = useState(location.state?.defaultName || "");
   const [password, setPassword] = useState("");
   const [maxParticipants, setMaxParticipants] = useState(10);
   const [settings, setSettings] = useState({
     selfDestruct: false,
-    screenshotProtection: true,
+    screenshotProtection: false, // Added back to satisfy old backend schema if not deployed
     keyRotationInterval: 50,
   });
   const [isCreating, setIsCreating] = useState(false);
@@ -282,21 +281,6 @@ export default function CreateRoom() {
                   checked={settings.selfDestruct}
                   onCheckedChange={(checked) =>
                     setSettings(prev => ({ ...prev, selfDestruct: checked }))
-                  }
-                />
-              </div>
-
-              <div className="flex items-center justify-between">
-                <div className="space-y-0.5">
-                  <Label className="text-sm font-medium">Screenshot Protection</Label>
-                  <p className="text-xs text-muted-foreground">
-                    Blur content to prevent screenshots
-                  </p>
-                </div>
-                <Switch
-                  checked={settings.screenshotProtection}
-                  onCheckedChange={(checked) =>
-                    setSettings(prev => ({ ...prev, screenshotProtection: checked }))
                   }
                 />
               </div>

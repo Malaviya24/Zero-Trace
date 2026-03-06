@@ -299,16 +299,18 @@ export const VlyToolbar: React.FC = () => {
       console.error("Failed to snapshot element", e);
     }
 
-    window.parent.postMessage(
-      {
-        type: "vly-toolbar-select",
-        selector,
-        reactHierarchy: hierarchy,
-        reactHierarchyFormatted: formatted,
-        image: imageDataUrl,
-      },
-      "*",
-    );
+    if (window.parent && window.parent !== window) {
+      window.parent.postMessage(
+        {
+          type: "vly-toolbar-select",
+          selector,
+          reactHierarchy: hierarchy,
+          reactHierarchyFormatted: formatted,
+          image: imageDataUrl,
+        },
+        "https://*.vly.ai", // Restrict to vly.ai domains
+      );
+    }
   }, []);
 
   const handleHover = useCallback(() => {

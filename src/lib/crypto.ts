@@ -77,6 +77,43 @@ export class ChatCrypto {
     return this.decoder.decode(decrypted);
   }
 
+  // Encrypt binary data (ArrayBuffer/Blob)
+  static async encryptFile(fileData: ArrayBuffer, key: CryptoKey): Promise<ArrayBuffer> {
+    const iv = crypto.getRandomValues(new Uint8Array(12));
+    
+    const encrypted = await crypto.subtle.encrypt(
+      {
+        name: "AES-GCM",
+        iv: iv,
+      },
+      key,
+      fileData
+    );
+
+    // Combine IV and encrypted data
+    const combined = new Uint8Array(iv.length + encrypted.byteLength);
+    combined.set(iv);
+    combined.set(new Uint8Array(encrypted), iv.length);
+
+    return combined.buffer;
+  }
+
+  // Decrypt binary data
+  static async decryptFile(encryptedData: ArrayBuffer, key: CryptoKey): Promise<ArrayBuffer> {
+    const combined = new Uint8Array(encryptedData);
+    const iv = combined.slice(0, 12);
+    const data = combined.slice(12);
+
+    return await crypto.subtle.decrypt(
+      {
+        name: "AES-GCM",
+        iv: iv,
+      },
+      key,
+      data
+    );
+  }
+
   // Generate room ID using cryptographically secure random
   static generateRoomId(): string {
     const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';

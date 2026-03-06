@@ -14,10 +14,16 @@ export function useAuth() {
   const [isLoading, setIsLoading] = useState(true);
 
   useEffect(() => {
-    if (!isAuthLoading && userQuery !== undefined) {
-      setIsLoading(false);
+    if (isAuthLoading) {
+      setIsLoading(true);
+      return;
     }
-  }, [isAuthLoading, userQuery]);
+    if (!isAuthenticated) {
+      setIsLoading(false);
+      return;
+    }
+    setIsLoading(userQuery === undefined);
+  }, [isAuthLoading, isAuthenticated, userQuery]);
 
   return {
     isLoading,

@@ -7,7 +7,6 @@ import { ChatCrypto } from "@/lib/crypto";
 import { motion } from "framer-motion";
 import {
   Shield,
-  Users,
   AlertTriangle,
   ArrowRight,
   Loader2,
@@ -16,10 +15,10 @@ import { useState, useEffect } from "react";
 import { useQuery, useMutation } from "@/lib/convex-helpers";
 import { toast } from "sonner";
 import { useNavigate, useParams, useLocation } from "react-router";
-import ChatRoom from "@/components/ChatRoom";
+import CometChatRoom from "@/components/cometchat/CometChatRoom";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { useRoomSession } from "@/hooks/useRoomSession";
-import { LoadingScreen, PageTransition } from "@/components/LoadingScreen";
+import { LoadingScreen } from "@/components/LoadingScreen";
 
 export default function JoinRoom() {
   const navigate = useNavigate();
@@ -40,7 +39,7 @@ export default function JoinRoom() {
   const joinRoomMutation = useMutation((api as any).rooms.joinRoom);
 
   // Use the new OOP service layer for session management
-  const { roomService, isRestoring, sessionData, hasUrlKey, setSessionData } = useRoomSession(roomId, location.hash);
+  const { roomService, isRestoring, sessionData, hasUrlKey } = useRoomSession(roomId, location.hash);
 
   // Sync session data to component state
   useEffect(() => {
@@ -154,10 +153,9 @@ export default function JoinRoom() {
 
   if (hasJoined && encryptionKey && participantId) {
     return (
-      <ChatRoom
+      <CometChatRoom
         roomId={roomId}
         displayName={displayName}
-        avatar={avatar}
         encryptionKey={encryptionKey}
         participantId={participantId}
       />
