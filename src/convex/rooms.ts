@@ -2,17 +2,38 @@ import { v } from "convex/values";
 import { mutation, query } from "./_generated/server";
 import { getCurrentUser } from "./users";
 
+async function requireAuthenticatedUser(ctx: unknown) {
+  const user = await getCurrentUser(ctx as never);
+  if (!user?._id) {
+    throw new Error("Unauthorized");
+  }
+  return user;
+}
+
 // Create a new chat room
+export const list = query({
+  args: {},
+  handler: async (ctx) => {
+    const user = await requireAuthenticatedUser(ctx);
+    return await ctx.db
+      .query("rooms")
+      .withIndex("by_creator", (q) => q.eq("creatorId", user._id))
+      .filter((q) => q.eq(q.field("isActive"), true))
+      .order("desc")
+      .take(20);
+  },
+});
+
 export const createRoom = mutation({
   args: {
     roomId: v.string(),
     name: v.optional(v.string()),
-    passwordHash: v.optional(v.string()),
+    passwordHash: v.optional(v.string()), // Kept as passwordHash in args for compatibility, mapped to passwordVerifier
     passwordSalt: v.optional(v.string()),
     maxParticipants: v.optional(v.number()),
     settings: v.optional(v.object({
       selfDestruct: v.boolean(),
-      screenshotProtection: v.boolean(),
+      screenshotProtection: v.optional(v.boolean()),
       keyRotationInterval: v.number(),
     })),
   },
@@ -41,16 +62,16 @@ export const createRoom = mutation({
 
       if (args.passwordHash) {
         if (args.passwordHash.length < 20 || args.passwordHash.length > 100) {
-          throw new Error("Invalid password hash format.");
+          throw new Error("Invalid password verifier format.");
         }
         if (!args.passwordSalt || args.passwordSalt.length < 10 || args.passwordSalt.length > 100) {
           throw new Error("Invalid password salt format.");
         }
       }
 
-      const user = await getCurrentUser(ctx);
+      const user = await requireAuthenticatedUser(ctx);
       const now = Date.now();
-      const expiresAt = now + (30 * 24 * 60 * 60 * 1000); // 30 days TTL
+      const expiresAt = now + (2 * 60 * 60 * 1000); // 2 hours TTL
 
       const generateCode = () => {
         const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
@@ -83,19 +104,19 @@ export const createRoom = mutation({
         await ctx.db.insert("rooms", {
           roomId: finalRoomId,
           name: args.name,
-          passwordHash: args.passwordHash,
+          passwordVerifier: args.passwordHash, // Map hash to verifier
           passwordSalt: args.passwordSalt,
-          creatorId: user?._id,
+          creatorId: user._id,
           isActive: true,
           maxParticipants,
           expiresAt,
-          settings: args.settings || {
-            selfDestruct: false,
-            screenshotProtection: true,
-            keyRotationInterval: 50,
+          settings: {
+            selfDestruct: args.settings?.selfDestruct ?? false,
+            screenshotProtection: args.settings?.screenshotProtection ?? false,
+            keyRotationInterval: args.settings?.keyRotationInterval ?? 50,
           },
         });
-      } catch (e) {
+      } catch {
         throw new Error("Failed to create room. Please try again.");
       }
 
@@ -135,7 +156,7 @@ export const getRoomByRoomId = query({
         expiresAt: room.expiresAt,
         settings: room.settings,
         creatorId: room.creatorId,
-        hasPassword: !!room.passwordHash,
+        hasPassword: !!room.passwordVerifier,
         passwordSalt: room.passwordSalt,
       };
     } catch (e) {
@@ -165,7 +186,7 @@ export const joinRoom = mutation({
         throw new Error("Invalid avatar.");
       }
 
-      const user = await getCurrentUser(ctx);
+      const user = await requireAuthenticatedUser(ctx);
       const room = await ctx.db
         .query("rooms")
         .withIndex("by_room_id", (q) => q.eq("roomId", args.roomId))
@@ -197,7 +218,7 @@ export const joinRoom = mutation({
       // - admin if signed-in creator
       // - else, if room has no creatorId and no admin exists yet, first joiner becomes admin
       const roleForUser =
-        user?._id && room!.creatorId && user._id === room!.creatorId
+        room!.creatorId && user._id === room!.creatorId
           ? "admin"
           : !room!.creatorId && !anyAdmin
           ? "admin"
@@ -207,7 +228,7 @@ export const joinRoom = mutation({
       const windowMs = 10 * 60 * 1000;
       const threshold = 5;
 
-      if (room.passwordHash) {
+      if (room.passwordVerifier) {
         if (!args.passwordHash) {
           await ctx.db.insert("joinAttempts", {
             roomId: args.roomId,
@@ -229,7 +250,7 @@ export const joinRoom = mutation({
           throw new Error("Too many incorrect password attempts. Try again later.");
         }
 
-        if (args.passwordHash !== room.passwordHash) {
+        if (args.passwordHash !== room.passwordVerifier) {
           await ctx.db.insert("joinAttempts", {
             roomId: args.roomId,
             failed: true,
@@ -257,17 +278,13 @@ export const joinRoom = mutation({
         throw new Error("Room is full");
       }
 
-      // Only try to find existing participant if we have a signed-in user
-      let existingParticipant = null as null | any;
-      if (user?._id) {
-        existingParticipant = await ctx.db
-          .query("participants")
-          .withIndex("by_room_and_user", (q) =>
-            q.eq("roomId", args.roomId).eq("userId", user._id)
-          )
-          .filter((q) => q.eq(q.field("isActive"), true))
-          .first();
-      }
+      const existingParticipant = await ctx.db
+        .query("participants")
+        .withIndex("by_room_and_user", (q) =>
+          q.eq("roomId", args.roomId).eq("userId", user._id)
+        )
+        .filter((q) => q.eq(q.field("isActive"), true))
+        .first();
 
       if (existingParticipant) {
         await ctx.db.patch(existingParticipant._id, {
@@ -284,7 +301,7 @@ export const joinRoom = mutation({
 
       const participantId = await ctx.db.insert("participants", {
         roomId: args.roomId,
-        userId: user?._id,
+        userId: user._id,
         displayName: sanitizedName,
         avatar: sanitizedAvatar,
         isActive: true,
@@ -321,27 +338,15 @@ export const leaveRoom = mutation({
   args: { roomId: v.string(), participantId: v.optional(v.id("participants")) },
   handler: async (ctx, args) => {
     try {
-      const user = await getCurrentUser(ctx);
+      const user = await requireAuthenticatedUser(ctx);
 
-      // Resolve participant:
-      // - If signed in, find by room+user
-      // - Else, fall back to provided participantId
-      let participant: any | null = null;
-
-      if (user?._id) {
-        participant = await ctx.db
-          .query("participants")
-          .withIndex("by_room_and_user", (q) =>
-            q.eq("roomId", args.roomId).eq("userId", user._id)
-          )
-          .filter((q) => q.eq(q.field("isActive"), true))
-          .first();
-      } else if (args.participantId) {
-        const maybe = await ctx.db.get(args.participantId);
-        if (maybe && maybe.roomId === args.roomId && maybe.isActive === true) {
-          participant = maybe;
-        }
-      }
+      const participant = await ctx.db
+        .query("participants")
+        .withIndex("by_room_and_user", (q) =>
+          q.eq("roomId", args.roomId).eq("userId", user._id)
+        )
+        .filter((q) => q.eq(q.field("isActive"), true))
+        .first();
 
       if (participant) {
         await ctx.db.patch(participant._id, { isActive: false, isTyping: false });
@@ -373,6 +378,16 @@ export const getRoomParticipants = query({
   args: { roomId: v.string() },
   handler: async (ctx, args) => {
     try {
+      const user = await requireAuthenticatedUser(ctx);
+      const me = await ctx.db
+        .query("participants")
+        .withIndex("by_room_and_user", (q) =>
+          q.eq("roomId", args.roomId).eq("userId", user._id)
+        )
+        .filter((q) => q.eq(q.field("isActive"), true))
+        .first();
+      if (!me) return [];
+
       return await ctx.db
         .query("participants")
         .withIndex("by_room_id", (q) => q.eq("roomId", args.roomId))
@@ -391,10 +406,7 @@ export const updateActivity = mutation({
   args: { roomId: v.string() },
   handler: async (ctx, args) => {
     try {
-      const user = await getCurrentUser(ctx);
-
-      // Skip for anonymous to avoid updating someone else
-      if (!user?._id) return;
+      const user = await requireAuthenticatedUser(ctx);
 
       const participant = await ctx.db
         .query("participants")
@@ -420,10 +432,7 @@ export const setTyping = mutation({
   args: { roomId: v.string(), isTyping: v.boolean() },
   handler: async (ctx, args) => {
     try {
-      const user = await getCurrentUser(ctx);
-
-      // Skip for anonymous to avoid toggling another anonymous participant
-      if (!user?._id) return;
+      const user = await requireAuthenticatedUser(ctx);
 
       const participant = await ctx.db
         .query("participants")
@@ -448,6 +457,7 @@ export const kickParticipant = mutation({
   args: { roomId: v.string(), participantId: v.id("participants"), callerParticipantId: v.id("participants") },
   handler: async (ctx, args) => {
     try {
+      const user = await requireAuthenticatedUser(ctx);
       const room = await ctx.db
         .query("rooms")
         .withIndex("by_room_id", (q) => q.eq("roomId", args.roomId))
@@ -455,7 +465,13 @@ export const kickParticipant = mutation({
       if (!room) throw new Error("Room not found");
 
       const caller = await ctx.db.get(args.callerParticipantId);
-      if (!caller || caller.roomId !== args.roomId || caller.isActive !== true || caller.role !== "admin") {
+      if (
+        !caller ||
+        caller.roomId !== args.roomId ||
+        caller.isActive !== true ||
+        caller.role !== "admin" ||
+        caller.userId !== user._id
+      ) {
         throw new Error("Only the admin can perform this action");
       }
 
@@ -504,7 +520,7 @@ export const clearParticipants = mutation({
 
       if (!room) return; // Room already gone
 
-      const user = await getCurrentUser(ctx);
+      const user = await requireAuthenticatedUser(ctx);
       const caller = await ctx.db.get(args.callerParticipantId);
       
       // Permit if:
@@ -513,7 +529,13 @@ export const clearParticipants = mutation({
       let isAdmin = false;
       if (user?._id && room.creatorId && user._id === room.creatorId) {
         isAdmin = true;
-      } else if (caller && caller.roomId === args.roomId && caller.role === "admin" && caller.isActive) {
+      } else if (
+        caller &&
+        caller.roomId === args.roomId &&
+        caller.role === "admin" &&
+        caller.isActive &&
+        caller.userId === user._id
+      ) {
         isAdmin = true;
       }
 
@@ -557,7 +579,9 @@ export const clearParticipants = mutation({
 
       const attempts = await ctx.db
         .query("joinAttempts")
-        .withIndex("by_room_and_failed_and_created_at", (q) => q.eq("roomId", args.roomId).eq("failed", true))
+        .withIndex("by_room_and_failed_and_created_at", (q) =>
+          q.eq("roomId", args.roomId).eq("failed", true)
+        )
         .collect();
       for (const a of attempts) await ctx.db.delete(a._id);
 

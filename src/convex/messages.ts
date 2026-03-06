@@ -2,6 +2,8 @@ import { v } from "convex/values";
 import { mutation, query } from "./_generated/server";
 import { getCurrentUser } from "./users";
 
+const ALLOWED_REACTIONS = new Set(["👍", "❤️", "😂", "🔥", "🎉", "😮", "😢", "👏"]);
+
 // Add: centralized error handler utility
 function handleConvexError(scope: string, e: unknown): never {
   console.error(`[${scope}]`, e);
@@ -12,6 +14,14 @@ function handleConvexError(scope: string, e: unknown): never {
   throw new Error("Unexpected server error.");
 }
 
+async function requireAuthenticatedUser(ctx: unknown) {
+  const user = await getCurrentUser(ctx as never);
+  if (!user?._id) {
+    throw new Error("Unauthorized");
+  }
+  return user;
+}
+
 // Send a message
 export const sendMessage = mutation({
   args: {
@@ -20,12 +30,20 @@ export const sendMessage = mutation({
     encryptionKeyId: v.string(),
     selfDestruct: v.optional(v.boolean()),
     participantId: v.id("participants"),
+    messageType: v.optional(v.union(v.literal("text"), v.literal("image"), v.literal("file"), v.literal("audio"))),
+    storageId: v.optional(v.string()),
+    fileName: v.optional(v.string()),
+    fileSize: v.optional(v.number()),
+    mimeType: v.optional(v.string()),
+    replyTo: v.optional(v.id("messages")),
   },
   handler: async (ctx, args) => {
     try {
+      const user = await requireAuthenticatedUser(ctx);
+
       // Validate content
       const body = args.content?.trim() ?? "";
-      if (!body) {
+      if (!body && !args.storageId) {
         throw new Error("Message content cannot be empty.");
       }
       if (body.length > 2000) {
@@ -45,11 +63,14 @@ export const sendMessage = mutation({
         throw new Error("Room not found or expired");
       }
 
-      const user = await getCurrentUser(ctx);
-
       // Resolve participant from provided participantId
       const participant = await ctx.db.get(args.participantId);
-      if (!participant || participant.roomId !== args.roomId || !participant.isActive) {
+      if (
+        !participant ||
+        participant.roomId !== args.roomId ||
+        !participant.isActive ||
+        participant.userId !== user._id
+      ) {
         throw new Error("You must join the room first");
       }
 
@@ -59,15 +80,20 @@ export const sendMessage = mutation({
 
       const messageId = await ctx.db.insert("messages", {
         roomId: args.roomId,
-        senderId: user?._id,
+        senderId: user._id,
         senderName: participant.displayName,
         senderAvatar: participant.avatar,
         content: body,
-        messageType: "text",
+        messageType: args.messageType || "text",
+        storageId: args.storageId,
+        fileName: args.fileName,
+        fileSize: args.fileSize,
+        mimeType: args.mimeType,
         isRead: false,
         selfDestructAt,
         expiresAt,
         encryptionKeyId: args.encryptionKeyId,
+        replyTo: args.replyTo,
       });
 
       // Update participant activity
@@ -80,6 +106,18 @@ export const sendMessage = mutation({
   },
 });
 
+export const generateUploadUrl = mutation({
+  args: {},
+  handler: async (ctx) => {
+    try {
+      await requireAuthenticatedUser(ctx);
+      return await ctx.storage.generateUploadUrl();
+    } catch (e) {
+      handleConvexError("messages.generateUploadUrl", e);
+    }
+  },
+});
+
 // Get messages for a room
 export const getRoomMessages = query({
   args: { 
@@ -88,6 +126,7 @@ export const getRoomMessages = query({
   },
   handler: async (ctx, args) => {
     try {
+      const user = await requireAuthenticatedUser(ctx);
       const limit = Math.max(1, Math.min(args.limit ?? 50, 200));
 
       // Validate room exists and not expired
@@ -97,6 +136,17 @@ export const getRoomMessages = query({
         .filter((q) => q.eq(q.field("isActive"), true))
         .first();
       if (!room || room.expiresAt < Date.now()) {
+        return [];
+      }
+
+      const participant = await ctx.db
+        .query("participants")
+        .withIndex("by_room_and_user", (q) =>
+          q.eq("roomId", args.roomId).eq("userId", user._id)
+        )
+        .filter((q) => q.eq(q.field("isActive"), true))
+        .first();
+      if (!participant) {
         return [];
       }
 
@@ -112,7 +162,20 @@ export const getRoomMessages = query({
         (m) => m.expiresAt > now && (!m.selfDestructAt || m.selfDestructAt > now)
       );
 
-      return visible.slice(Math.max(0, visible.length - limit));
+      // Enhance with storage URLs
+      const enhancedMessages = await Promise.all(
+        visible.slice(Math.max(0, visible.length - limit)).map(async (msg) => {
+          if (msg.storageId) {
+            return {
+              ...msg,
+              fileUrl: await ctx.storage.getUrl(msg.storageId),
+            };
+          }
+          return msg;
+        })
+      );
+
+      return enhancedMessages;
     } catch (e) {
       handleConvexError("messages.getRoomMessages", e);
     }
@@ -127,12 +190,18 @@ export const markMessageRead = mutation({
   },
   handler: async (ctx, args) => {
     try {
+      const user = await requireAuthenticatedUser(ctx);
       const message = await ctx.db.get(args.messageId);
       if (!message) return;
 
       // Ensure caller is a participant of the message's room
       const participant = await ctx.db.get(args.participantId);
-      if (!participant || participant.roomId !== message.roomId || !participant.isActive) {
+      if (
+        !participant ||
+        participant.roomId !== message.roomId ||
+        !participant.isActive ||
+        participant.userId !== user._id
+      ) {
         return;
       }
 
@@ -162,6 +231,7 @@ export const editMessage = mutation({
   },
   handler: async (ctx, args) => {
     try {
+      const user = await requireAuthenticatedUser(ctx);
       const body = args.content?.trim() ?? "";
       if (!body) {
         throw new Error("Message content cannot be empty.");
@@ -179,19 +249,23 @@ export const editMessage = mutation({
         throw new Error("Only text messages can be edited");
       }
 
-      const user = await getCurrentUser(ctx);
       const participant = await ctx.db.get(args.participantId);
 
-      if (!participant || participant.roomId !== message.roomId || !participant.isActive) {
+      if (
+        !participant ||
+        participant.roomId !== message.roomId ||
+        !participant.isActive ||
+        participant.userId !== user._id
+      ) {
         throw new Error("You must be in the room to edit messages");
       }
 
       // Only sender can edit their own messages
-      if (message.senderId && user?._id && message.senderId !== user._id) {
+      if (message.senderId && message.senderId !== user._id) {
         throw new Error("You can only edit your own messages");
       }
 
-      // For anonymous users, check if participant name matches
+      // Legacy anonymous messages can still be edited by original participant identity
       if (!message.senderId && message.senderName !== participant.displayName) {
         throw new Error("You can only edit your own messages");
       }
@@ -208,18 +282,103 @@ export const editMessage = mutation({
   },
 });
 
+export const toggleReaction = mutation({
+  args: {
+    messageId: v.id("messages"),
+    participantId: v.id("participants"),
+    emoji: v.string(),
+  },
+  handler: async (ctx, args) => {
+    try {
+      const user = await requireAuthenticatedUser(ctx);
+      const emoji = args.emoji.trim();
+      if (!emoji || emoji.length > 8) {
+        throw new Error("Unsupported reaction");
+      }
+      if (!ALLOWED_REACTIONS.has(emoji)) {
+        throw new Error("Unsupported reaction");
+      }
+
+      const [message, participant] = await Promise.all([
+        ctx.db.get(args.messageId),
+        ctx.db.get(args.participantId),
+      ]);
+
+      if (!message) {
+        throw new Error("Message not found");
+      }
+      // Allow reactions on all message types now
+      // if (message.messageType !== "text") {
+      //   throw new Error("Reactions are only available on text messages");
+      // }
+      if (!participant) {
+        throw new Error("You must be an active room participant");
+      }
+      if (participant.roomId !== message.roomId) {
+        throw new Error("Participant not in message room");
+      }
+      if (!participant.isActive) {
+        throw new Error("You must be an active room participant");
+      }
+      if (participant.userId !== user._id) {
+        throw new Error("You can only react as yourself");
+      }
+
+      const existing = message.reactions ?? [];
+      const reactionIndex = existing.findIndex(
+        (reaction) =>
+          reaction.participantId === args.participantId &&
+          reaction.emoji === emoji
+      );
+
+      // One reaction per person per message: remove any existing reaction from this participant first
+      const withoutMine = existing.filter((r) => r.participantId !== args.participantId);
+      const reactions =
+        reactionIndex >= 0
+          ? existing.filter((_, index) => index !== reactionIndex)
+          : [
+              ...withoutMine,
+              {
+                emoji,
+                participantId: args.participantId,
+                displayName: participant.displayName,
+                createdAt: Date.now(),
+              },
+            ];
+
+      await ctx.db.patch(args.messageId, { reactions });
+      return { messageId: args.messageId, reactions };
+    } catch (e) {
+      handleConvexError("messages.toggleReaction", e);
+    }
+  },
+});
+
 // Delete a message (panic mode)
 export const deleteMessage = mutation({
   args: { messageId: v.id("messages") },
   handler: async (ctx, args) => {
     try {
-      const user = await getCurrentUser(ctx);
+      const user = await requireAuthenticatedUser(ctx);
       const message = await ctx.db.get(args.messageId);
       
       if (!message) return;
       
       // Only sender can delete their own messages
-      if (message.senderId === user?._id) {
+      if (message.senderId === user._id) {
+        await ctx.db.delete(args.messageId);
+        return;
+      }
+
+      // Legacy anonymous messages: allow delete when caller owns matching participant identity.
+      const participant = await ctx.db
+        .query("participants")
+        .withIndex("by_room_and_user", (q) =>
+          q.eq("roomId", message.roomId).eq("userId", user._id)
+        )
+        .filter((q) => q.eq(q.field("isActive"), true))
+        .first();
+      if (participant && !message.senderId && message.senderName === participant.displayName) {
         await ctx.db.delete(args.messageId);
       }
     } catch (e) {
@@ -233,7 +392,7 @@ export const clearRoomMessages = mutation({
   args: { roomId: v.string(), callerParticipantId: v.id("participants") },
   handler: async (ctx, args) => {
     try {
-      const user = await getCurrentUser(ctx);
+      const user = await requireAuthenticatedUser(ctx);
 
       const room = await ctx.db
         .query("rooms")
@@ -252,7 +411,13 @@ export const clearRoomMessages = mutation({
         isAdmin = true;
       } else {
         const caller = await ctx.db.get(args.callerParticipantId);
-        isAdmin = !!(caller && caller.roomId === args.roomId && caller.role === "admin" && caller.isActive);
+        isAdmin = !!(
+          caller &&
+          caller.roomId === args.roomId &&
+          caller.role === "admin" &&
+          caller.isActive &&
+          caller.userId === user._id
+        );
       }
 
       if (!isAdmin) {

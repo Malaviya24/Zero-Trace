@@ -1,6 +1,39 @@
 import { v } from "convex/values";
-import { mutation, query } from "./_generated/server";
-import { api } from "./_generated/api";
+import { mutation, query, type MutationCtx, type QueryCtx } from "./_generated/server";
+import type { Id } from "./_generated/dataModel";
+import { getCurrentUser } from "./users";
+
+type Ctx = MutationCtx | QueryCtx;
+
+async function requireAuthenticatedUser(ctx: Ctx) {
+  const user = await getCurrentUser(ctx as never);
+  if (!user?._id) {
+    throw new Error("Unauthorized");
+  }
+  return user;
+}
+
+async function getActiveRoom(ctx: Ctx, roomId: string) {
+  const room = await ctx.db
+    .query("rooms")
+    .withIndex("by_room_id", (q) => q.eq("roomId", roomId))
+    .filter((q) => q.eq(q.field("isActive"), true))
+    .first();
+  if (!room || room.expiresAt < Date.now()) {
+    throw new Error("Room not found or expired");
+  }
+  return room;
+}
+
+async function getActiveMembership(ctx: Ctx, roomId: string, userId: Id<"users">) {
+  return await ctx.db
+    .query("participants")
+    .withIndex("by_room_and_user", (q) =>
+      q.eq("roomId", roomId).eq("userId", userId)
+    )
+    .filter((q) => q.eq(q.field("isActive"), true))
+    .first();
+}
 
 // Generate new encryption key for room
 export const generateRoomKey = mutation({
@@ -10,6 +43,7 @@ export const generateRoomKey = mutation({
   },
   handler: async (ctx, args) => {
     try {
+      const user = await requireAuthenticatedUser(ctx);
       // Validate input
       if (!args.encryptedKey.trim()) {
         throw new Error("Encrypted key is required.");
@@ -18,14 +52,11 @@ export const generateRoomKey = mutation({
         throw new Error("Encrypted key payload too large.");
       }
 
-      // Validate room exists and is active / not expired
-      const room = await ctx.db
-        .query("rooms")
-        .withIndex("by_room_id", (q) => q.eq("roomId", args.roomId))
-        .filter((q) => q.eq(q.field("isActive"), true))
-        .first();
-      if (!room || room.expiresAt < Date.now()) {
-        throw new Error("Room not found or expired");
+      const room = await getActiveRoom(ctx, args.roomId);
+      const membership = await getActiveMembership(ctx, args.roomId, user._id);
+      const isAdmin = (room.creatorId && room.creatorId === user._id) || membership?.role === "admin";
+      if (!isAdmin) {
+        throw new Error("Only room admin can rotate keys");
       }
 
       const now = Date.now();
@@ -67,6 +98,13 @@ export const getActiveRoomKey = query({
   args: { roomId: v.string() },
   handler: async (ctx, args) => {
     try {
+      const user = await requireAuthenticatedUser(ctx);
+      await getActiveRoom(ctx, args.roomId);
+      const membership = await getActiveMembership(ctx, args.roomId, user._id);
+      if (!membership) {
+        throw new Error("Unauthorized");
+      }
+
       return await ctx.db
         .query("encryptionKeys")
         .withIndex("by_room_id", (q) => q.eq("roomId", args.roomId))
@@ -88,6 +126,7 @@ export const rotateRoomKey = mutation({
   },
   handler: async (ctx, args) => {
     try {
+      const user = await requireAuthenticatedUser(ctx);
       // Validate input
       if (!args.newEncryptedKey.trim()) {
         throw new Error("Encrypted key is required.");
@@ -96,14 +135,11 @@ export const rotateRoomKey = mutation({
         throw new Error("Encrypted key payload too large.");
       }
 
-      // Validate room exists and is active / not expired
-      const room = await ctx.db
-        .query("rooms")
-        .withIndex("by_room_id", (q) => q.eq("roomId", args.roomId))
-        .filter((q) => q.eq(q.field("isActive"), true))
-        .first();
-      if (!room || room.expiresAt < Date.now()) {
-        throw new Error("Room not found or expired");
+      const room = await getActiveRoom(ctx, args.roomId);
+      const membership = await getActiveMembership(ctx, args.roomId, user._id);
+      const isAdmin = (room.creatorId && room.creatorId === user._id) || membership?.role === "admin";
+      if (!isAdmin) {
+        throw new Error("Only room admin can rotate keys");
       }
 
       const now = Date.now();

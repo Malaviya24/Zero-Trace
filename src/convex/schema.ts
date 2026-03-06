@@ -36,7 +36,7 @@ const schema = defineSchema(
     rooms: defineTable({
       roomId: v.string(), // unique room identifier
       name: v.optional(v.string()), // optional room name
-      passwordHash: v.optional(v.string()), // bcrypt hashed password
+      passwordVerifier: v.optional(v.string()), // Client-derived PBKDF2 verifier
       // Add: passwordSalt to allow deterministic verification
       passwordSalt: v.optional(v.string()),
       creatorId: v.optional(v.id("users")), // creator (can be anonymous)
@@ -52,7 +52,8 @@ const schema = defineSchema(
     })
     .index("by_room_id", ["roomId"])
     .index("by_expires_at", ["expiresAt"])
-    .index("by_active", ["isActive"]),
+    .index("by_active", ["isActive"])
+    .index("by_creator", ["creatorId"]),
 
     // Messages - ephemeral, encrypted
     messages: defineTable({
@@ -63,16 +64,30 @@ const schema = defineSchema(
       content: v.string(), // encrypted message content
       messageType: v.union(
         v.literal("text"),
+        v.literal("image"),
+        v.literal("file"),
+        v.literal("audio"),
         v.literal("system"),
         v.literal("join"),
         v.literal("leave")
       ),
+      storageId: v.optional(v.string()), // for file/image attachments
+      fileName: v.optional(v.string()), // original file name
+      fileSize: v.optional(v.number()), // file size in bytes
+      mimeType: v.optional(v.string()), // MIME type
       isRead: v.boolean(), // read status
       readAt: v.optional(v.number()), // when message was read
       selfDestructAt: v.optional(v.number()), // self-destruct timestamp
       expiresAt: v.number(), // TTL timestamp
       encryptionKeyId: v.string(), // which key was used for encryption
+      replyTo: v.optional(v.id("messages")), // ID of the message being replied to
       editedAt: v.optional(v.number()), // when message was last edited
+      reactions: v.optional(v.array(v.object({
+        emoji: v.string(),
+        participantId: v.id("participants"),
+        displayName: v.string(),
+        createdAt: v.number(),
+      }))),
     })
     .index("by_room_id", ["roomId"])
     .index("by_expires_at", ["expiresAt"])
@@ -156,6 +171,7 @@ const schema = defineSchema(
       userId: v.optional(v.id("users")), // can be anonymous
       displayName: v.string(),
       role: v.union(v.literal("admin"), v.literal("member")),
+      leaveToken: v.optional(v.string()),
       joinedAt: v.optional(v.number()), // when they joined the call
       leftAt: v.optional(v.number()), // when they left the call
       expiresAt: v.number(), // TTL timestamp
@@ -166,6 +182,12 @@ const schema = defineSchema(
         v.literal("fair"),
         v.literal("poor")
       )),
+      qualityMetrics: v.optional(v.object({
+        rtt: v.optional(v.number()),
+        packetLoss: v.optional(v.number()),
+        jitter: v.optional(v.number()),
+        bandwidth: v.optional(v.number()),
+      })),
       lastQualityUpdate: v.optional(v.number()),
       // Phase 2: Reconnection tracking
       reconnectAttempts: v.optional(v.number()),
@@ -173,6 +195,7 @@ const schema = defineSchema(
     })
     .index("by_call_id", ["callId"])
     .index("by_user_id", ["userId"])
+    .index("by_call_and_user", ["callId", "userId"])
     .index("by_expires_at", ["expiresAt"]),
 
     // WebRTC signaling for automatic peer connection (MESH ARCHITECTURE)
@@ -195,7 +218,7 @@ const schema = defineSchema(
     .index("by_expires_at", ["expiresAt"]),
   },
   {
-    schemaValidation: false,
+    schemaValidation: true,
   },
 );
 

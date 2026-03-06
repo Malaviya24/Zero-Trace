@@ -1,5 +1,14 @@
 import { v } from "convex/values";
 import { mutation } from "./_generated/server";
+import { getCurrentUser } from "./users";
+
+async function requireAuthenticatedUser(ctx: unknown) {
+  const user = await getCurrentUser(ctx as never);
+  if (!user?._id) {
+    throw new Error("Unauthorized");
+  }
+  return user;
+}
 
 // Phase 1: Connection quality monitoring
 export const updateConnectionQuality = mutation({
@@ -19,8 +28,15 @@ export const updateConnectionQuality = mutation({
     })),
   },
   handler: async (ctx, args) => {
+    const user = await requireAuthenticatedUser(ctx);
+    const participant = await ctx.db.get(args.participantId);
+    if (!participant || participant.userId !== user._id) {
+      throw new Error("Unauthorized");
+    }
+
     await ctx.db.patch(args.participantId, {
       connectionQuality: args.quality,
+      qualityMetrics: args.metrics,
       lastQualityUpdate: Date.now(),
     });
   },
@@ -32,8 +48,11 @@ export const trackReconnection = mutation({
     participantId: v.id("callParticipants"),
   },
   handler: async (ctx, args) => {
+    const user = await requireAuthenticatedUser(ctx);
     const participant = await ctx.db.get(args.participantId);
-    if (!participant) return;
+    if (!participant || participant.userId !== user._id) {
+      throw new Error("Unauthorized");
+    }
     
     await ctx.db.patch(args.participantId, {
       reconnectAttempts: (participant.reconnectAttempts || 0) + 1,

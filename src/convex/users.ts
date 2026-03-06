@@ -31,3 +31,15 @@ export const getCurrentUser = async (ctx: QueryCtx) => {
   }
   return await ctx.db.get(userId);
 };
+
+export const list = query({
+  args: {},
+  handler: async (ctx) => {
+    const userId = await getAuthUserId(ctx);
+    if (userId === null) {
+      return [];
+    }
+    const user = await ctx.db.get(userId);
+    return user ? [user] : [];
+  },
+});
