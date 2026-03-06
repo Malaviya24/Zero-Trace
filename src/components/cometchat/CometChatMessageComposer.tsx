@@ -7,7 +7,7 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import EmojiPicker, { EmojiClickData } from 'emoji-picker-react';
 
 export interface CometChatMessageComposerProps {
-  onSend: (content: string, type: 'text' | 'image' | 'file' | 'audio', file?: File) => void;
+  onSend: (content: string, type: 'text' | 'image' | 'file' | 'audio', file?: File) => Promise<void> | void;
   onTyping?: (isTyping: boolean) => void;
   disabled?: boolean;
   replyTo?: { senderName: string; content: string; type: 'text' | 'image' | 'file' | 'audio' | 'system' } | null;
@@ -23,14 +23,16 @@ export function CometChatMessageComposer({
 }: CometChatMessageComposerProps) {
   const [message, setMessage] = useState('');
   const [isTyping, setIsTyping] = useState(false);
+  const [isSending, setIsSending] = useState(false);
   const typingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
+    if (isSending) return;
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
-      handleSend();
+      void handleSend();
     }
   };
 
@@ -52,20 +54,31 @@ export function CometChatMessageComposer({
     }, 1000);
   };
 
-  const handleSend = () => {
-    if (!message.trim()) return;
-    onSend(message, 'text');
-    setMessage('');
-    setIsTyping(false);
-    onTyping?.(false);
+  const handleSend = async () => {
+    if (!message.trim() || isSending) return;
+    setIsSending(true);
+    try {
+      await onSend(message, 'text');
+      setMessage('');
+      setIsTyping(false);
+      onTyping?.(false);
+    } finally {
+      setIsSending(false);
+    }
   };
 
-  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (isSending) return;
     const file = e.target.files?.[0];
     if (!file) return;
     
     const type = file.type.startsWith('image/') ? 'image' : 'file';
-    onSend(file.name, type, file);
+    setIsSending(true);
+    try {
+      await onSend(file.name, type, file);
+    } finally {
+      setIsSending(false);
+    }
     
     if (fileInputRef.current) {
       fileInputRef.current.value = '';
@@ -77,6 +90,7 @@ export function CometChatMessageComposer({
   const chunksRef = useRef<BlobPart[]>([]);
 
   const handleMicClick = async () => {
+    if (isSending) return;
     if (isRecording) {
       // Stop recording
       if (mediaRecorderRef.current && mediaRecorderRef.current.state === "recording") {
@@ -105,7 +119,7 @@ export function CometChatMessageComposer({
       mediaRecorder.onstop = () => {
         const blob = new Blob(chunksRef.current, { type: 'audio/webm' });
         const file = new File([blob], `voice-note-${Date.now()}.webm`, { type: 'audio/webm' });
-        onSend("Voice Message", 'audio', file);
+        void onSend("Voice Message", 'audio', file);
         stream.getTracks().forEach(track => track.stop());
       };
 
@@ -195,7 +209,7 @@ export function CometChatMessageComposer({
             placeholder="Type a message..."
             className="min-h-[24px] max-h-[120px] w-full resize-none border-none bg-transparent p-0 focus-visible:ring-0 placeholder:text-slate-400"
             rows={1}
-            disabled={disabled}
+            disabled={disabled || isSending}
           />
         </div>
 
@@ -214,8 +228,8 @@ export function CometChatMessageComposer({
 
           {message.trim() ? (
             <Button 
-            onClick={handleSend}
-            disabled={disabled}
+            onClick={() => void handleSend()}
+            disabled={disabled || isSending}
             size="icon"
             className="h-10 w-10 rounded-full bg-primary hover:bg-primary/90 text-primary-foreground shadow-sm transition-all duration-200 hover:scale-105"
           >
@@ -223,7 +237,7 @@ export function CometChatMessageComposer({
           </Button>
         ) : (
           <Button 
-            disabled={disabled}
+            disabled={disabled || isSending}
             variant="ghost"
             size="icon"
             className={cn(

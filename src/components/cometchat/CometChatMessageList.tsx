@@ -221,6 +221,7 @@ function MessageBubble({
 
   return (
     <div 
+      id={`message-${message._id}`}
       className={cn(
         "flex w-full group relative mb-1 select-none",
         message.isMe ? "justify-end" : "justify-start"

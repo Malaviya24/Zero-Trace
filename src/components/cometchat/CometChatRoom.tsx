@@ -111,7 +111,7 @@ export default function CometChatRoom({ roomId, displayName, encryptionKey, part
   const deleteMessageMutation = useMutation((api as any).messages.deleteMessage);
 
   // Local State
-  const [keyRotationCount, setKeyRotationCount] = useState(0);
+  const [, setKeyRotationCount] = useState(0);
   const [dismissedCallIds, setDismissedCallIds] = useState<Set<string>>(new Set());
   const [messageCache, setMessageCache] = useState<Message[]>(() => readMessageCacheFromStorage(roomId));
   const [decryptedMessages, setDecryptedMessages] = useState<CometMessage[]>([]);
@@ -347,14 +347,17 @@ export default function CometChatRoom({ roomId, displayName, encryptionKey, part
         participantId: participantId as any,
         messageType: type,
         storageId,
-        replyTo: replyTo ? (replyTo._id as any) : undefined,
+        replyTo: replyTo?._id,
       });
       setReplyTo(null); // Clear reply state
-      setKeyRotationCount(prev => prev + 1);
-      if (keyRotationCount >= 50) {
-        setKeyRotationCount(0);
-        toast.info("Key rotated");
-      }
+      setKeyRotationCount((prev) => {
+        const next = prev + 1;
+        if (next >= 50) {
+          toast.info("Key rotated");
+          return 0;
+        }
+        return next;
+      });
       emitTyping(false);
     } catch (error) {
       console.error(error);

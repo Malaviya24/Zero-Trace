@@ -1,6 +1,7 @@
 import { v } from "convex/values";
 import { mutation, query } from "./_generated/server";
 import { getCurrentUser } from "./users";
+import type { Id } from "./_generated/dataModel";
 
 const ALLOWED_REACTIONS = new Set(["👍", "❤️", "😂", "🔥", "🎉", "😮", "😢", "👏"]);
 
@@ -35,7 +36,7 @@ export const sendMessage = mutation({
     fileName: v.optional(v.string()),
     fileSize: v.optional(v.number()),
     mimeType: v.optional(v.string()),
-    replyTo: v.optional(v.id("messages")),
+    replyTo: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     try {
@@ -77,6 +78,24 @@ export const sendMessage = mutation({
       const now = Date.now();
       const expiresAt = now + 2 * 60 * 60 * 1000; // 2 hours TTL
       const selfDestructAt = args.selfDestruct ? now + 10 * 60 * 1000 : undefined; // 10 minutes
+      let resolvedReplyTo: Id<"messages"> | undefined;
+
+      if (args.replyTo) {
+        // Best-effort: invalid or stale reply ids should not block sending the new message.
+        try {
+          const parent = await ctx.db.get(args.replyTo as Id<"messages">);
+          if (
+            parent &&
+            parent.roomId === args.roomId &&
+            parent.expiresAt > now &&
+            (!parent.selfDestructAt || parent.selfDestructAt > now)
+          ) {
+            resolvedReplyTo = parent._id;
+          }
+        } catch {
+          resolvedReplyTo = undefined;
+        }
+      }
 
       const messageId = await ctx.db.insert("messages", {
         roomId: args.roomId,
@@ -93,7 +112,7 @@ export const sendMessage = mutation({
         selfDestructAt,
         expiresAt,
         encryptionKeyId: args.encryptionKeyId,
-        replyTo: args.replyTo,
+        replyTo: resolvedReplyTo,
       });
 
       // Update participant activity
