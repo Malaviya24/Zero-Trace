@@ -2,6 +2,12 @@ import { v } from "convex/values";
 import { mutation, query } from "./_generated/server";
 import { getCurrentUser } from "./users";
 
+const generateLeaveToken = () => {
+  const first = globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  const second = globalThis.crypto?.randomUUID?.() ?? Math.random().toString(36).slice(2);
+  return `${first}${second}`;
+};
+
 // Create a new call
 export const create = mutation({
   args: {
@@ -94,10 +100,12 @@ export const join = mutation({
       }
 
       if (participant && !participant.leftAt) {
+        const leaveToken = generateLeaveToken();
         await ctx.db.patch(participant._id, {
           joinedAt: now,
           displayName,
-        });
+          leaveToken,
+        } as any);
         const currentParticipants = await ctx.db
           .query("callParticipants")
           .withIndex("by_call_id", (q) => q.eq("callId", args.callId))
@@ -113,10 +121,12 @@ export const join = mutation({
           offer: call.offer,
           isFirst,
           offererId: !isFirst && sorted.length > 0 ? sorted[0]._id : undefined,
+          leaveToken,
         };
       }
 
       // Add new participant
+      const leaveToken = generateLeaveToken();
       const participantId = await ctx.db.insert("callParticipants", {
         callId: args.callId,
         userId: user?._id,
@@ -124,7 +134,8 @@ export const join = mutation({
         role: "member",
         joinedAt: now,
         expiresAt: call.expiresAt,
-      });
+        leaveToken,
+      } as any);
 
       // Update call status to active when second person joins
       const allParticipants = await ctx.db
@@ -149,6 +160,7 @@ export const join = mutation({
         offer: call.offer,
         isFirst,
         offererId: !isFirst && sorted.length > 0 ? sorted[0]._id : undefined,
+        leaveToken,
       };
     } catch (e) {
       console.error("calls.join error:", e);
@@ -248,6 +260,7 @@ export const leave = mutation({
   args: {
     callId: v.id("calls"),
     participantId: v.optional(v.id("callParticipants")),
+    leaveToken: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     try {
@@ -261,9 +274,14 @@ export const leave = mutation({
           .withIndex("by_call_id", (q) => q.eq("callId", args.callId))
           .filter((q) => q.eq(q.field("userId"), user._id))
           .first();
-      } else if (args.participantId) {
+      } else if (args.participantId && args.leaveToken) {
         const maybe = await ctx.db.get(args.participantId);
-        if (maybe && maybe.callId === args.callId) {
+        if (
+          maybe &&
+          maybe.callId === args.callId &&
+          maybe.userId === undefined &&
+          (maybe as any).leaveToken === args.leaveToken
+        ) {
           participant = maybe;
         }
       }
@@ -329,7 +347,22 @@ export const getParticipants = query({
         .collect();
 
       // Only active participants (no leftAt set)
-      return participants.filter((p) => p.leftAt === undefined);
+      return participants
+        .filter((p) => p.leftAt === undefined)
+        .map((p) => ({
+          _id: p._id,
+          _creationTime: p._creationTime,
+          callId: p.callId,
+          userId: p.userId,
+          displayName: p.displayName,
+          role: p.role,
+          joinedAt: p.joinedAt,
+          leftAt: p.leftAt,
+          connectionQuality: p.connectionQuality,
+          lastQualityUpdate: p.lastQualityUpdate,
+          reconnectAttempts: p.reconnectAttempts,
+          lastReconnectAt: p.lastReconnectAt,
+        }));
     } catch (e) {
       console.error("calls.getParticipants error:", e);
       return [];

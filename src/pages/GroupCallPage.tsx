@@ -69,6 +69,7 @@ function GroupCallPageContent() {
   const peerSetupRef = useRef<Set<string>>(new Set());
   const cleanupTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const hasNavigatedRef = useRef(false);
+  const leaveTokenRef = useRef<string | null>(null);
 
   const call = useQuery(typedApi.calls.get, callId ? { callId: callId as Id<"calls"> } : "skip");
   const participants = useQuery(typedApi.calls.getParticipants, callId ? { callId: callId as Id<"calls"> } : "skip");
@@ -143,11 +144,13 @@ function GroupCallPageContent() {
         displayName,
       }).then((result: any) => {
         const participantId = result.participantId;
+        leaveTokenRef.current = typeof result.leaveToken === "string" ? result.leaveToken : null;
         console.log("[Call] Joined as:", displayName, "pid:", participantId);
         actions.setMyParticipantId(participantId as Id<"callParticipants">);
       }).catch(err => {
         console.error("[Call] Failed to join:", err);
         toast.error("Failed to join call");
+        leaveTokenRef.current = null;
         hasJoinedRef.current = false;
       });
     }
@@ -165,6 +168,7 @@ function GroupCallPageContent() {
         useGroupCallStore.getState().actions.reset();
         peerSetupRef.current.clear();
         processedSignalsRef.current.clear();
+        leaveTokenRef.current = null;
         sessionStorage.removeItem("call_display_name");
       }, 100);
     };
@@ -508,6 +512,7 @@ function GroupCallPageContent() {
         await leaveCallMutation({
           callId: callId as Id<"calls">,
           participantId: state.myParticipantId || undefined,
+          leaveToken: leaveTokenRef.current || undefined,
         });
       } catch (error) {
         console.error("[Call] Backend leave failed:", error);
