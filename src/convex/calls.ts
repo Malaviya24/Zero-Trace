@@ -268,22 +268,30 @@ export const leave = mutation({
       const now = Date.now();
 
       let participant = null;
-      if (user?._id) {
-        participant = await ctx.db
-          .query("callParticipants")
-          .withIndex("by_call_id", (q) => q.eq("callId", args.callId))
-          .filter((q) => q.eq(q.field("userId"), user._id))
-          .first();
-      } else if (args.participantId && args.leaveToken) {
+
+      // Prefer explicit participant identity (id + token) to avoid
+      // ambiguous user-based lookups after leave/rejoin cycles.
+      if (args.participantId && args.leaveToken) {
         const maybe = await ctx.db.get(args.participantId);
         if (
           maybe &&
           maybe.callId === args.callId &&
-          maybe.userId === undefined &&
           (maybe as any).leaveToken === args.leaveToken
         ) {
           participant = maybe;
         }
+      }
+
+      if (!participant && user?._id) {
+        const userParticipants = await ctx.db
+          .query("callParticipants")
+          .withIndex("by_call_id", (q) => q.eq("callId", args.callId))
+          .filter((q) => q.eq(q.field("userId"), user._id))
+          .collect();
+        participant =
+          userParticipants
+            .filter((p) => p.leftAt === undefined)
+            .sort((a, b) => (b.joinedAt || 0) - (a.joinedAt || 0))[0] ?? null;
       }
 
       if (participant && !participant.leftAt) {
