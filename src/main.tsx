@@ -3,7 +3,7 @@ import { VlyToolbar } from "../vly-toolbar-readonly.tsx";
 import { InstrumentationProvider } from "@/instrumentation.tsx";
 import { ConvexAuthProvider, useAuthActions } from "@convex-dev/auth/react";
 import { ConvexReactClient, useConvexAuth } from "convex/react";
-import { StrictMode, Suspense, lazy, useEffect, useRef, type ReactNode } from "react";
+import { StrictMode, Suspense, lazy, useEffect, useRef, useState, type ReactNode } from "react";
 import { createRoot } from "react-dom/client";
 import { createBrowserRouter, RouterProvider } from "react-router";
 import "./index.css";
@@ -41,15 +41,36 @@ function AuthBootstrap({ children }: { children: ReactNode }) {
   const { isLoading, isAuthenticated } = useConvexAuth();
   const { signIn } = useAuthActions();
   const isBootstrappingRef = useRef(false);
+  const [bootstrapError, setBootstrapError] = useState<string | null>(null);
 
   useEffect(() => {
-    if (isLoading || isAuthenticated || isBootstrappingRef.current) return;
+    if (isLoading || isAuthenticated || isBootstrappingRef.current || bootstrapError) return;
     isBootstrappingRef.current = true;
     signIn("anonymous").catch((error: unknown) => {
       console.error("Anonymous auth bootstrap failed:", error);
+      const message =
+        error instanceof Error && error.message
+          ? error.message
+          : "Anonymous auth bootstrap failed. Check Convex auth environment variables.";
+      setBootstrapError(message);
       isBootstrappingRef.current = false;
     });
-  }, [isLoading, isAuthenticated, signIn]);
+  }, [isLoading, isAuthenticated, signIn, bootstrapError]);
+
+  if (bootstrapError) {
+    return (
+      <div className="h-dvh flex items-center justify-center bg-background px-6">
+        <div className="max-w-xl rounded-lg border bg-card p-6 text-card-foreground shadow-sm">
+          <h2 className="text-lg font-semibold mb-2">Authentication Configuration Error</h2>
+          <p className="text-sm text-muted-foreground">
+            Anonymous sign-in failed. Verify Convex environment variable `JWT_PRIVATE_KEY` is set
+            and functions are deployed.
+          </p>
+          <pre className="mt-4 max-h-48 overflow-auto rounded bg-muted p-3 text-xs">{bootstrapError}</pre>
+        </div>
+      </div>
+    );
+  }
 
   if (isLoading || (!isAuthenticated && isBootstrappingRef.current)) {
     return <RouteFallback />;
