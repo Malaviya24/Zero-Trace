@@ -3,12 +3,13 @@ import { VlyToolbar } from "../vly-toolbar-readonly.tsx";
 import { InstrumentationProvider } from "@/instrumentation.tsx";
 import { ConvexAuthProvider, useAuthActions } from "@convex-dev/auth/react";
 import { ConvexReactClient, useConvexAuth } from "convex/react";
-import { StrictMode, Suspense, lazy, useEffect, useRef, useState, type ReactNode } from "react";
+import { StrictMode, Suspense, lazy, useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { createRoot } from "react-dom/client";
 import { createBrowserRouter, RouterProvider } from "react-router";
 import "./index.css";
 import "./types/global.d.ts";
 import { CallProvider } from "@/call";
+import { Button } from "@/components/ui/button";
 
 const LandingPage = lazy(() => import("./pages/Landing.tsx"));
 const AuthPage = lazy(() => import("@/pages/Auth.tsx"));
@@ -42,20 +43,48 @@ function AuthBootstrap({ children }: { children: ReactNode }) {
   const { signIn } = useAuthActions();
   const isBootstrappingRef = useRef(false);
   const [bootstrapError, setBootstrapError] = useState<string | null>(null);
+  const [bootstrapAttempts, setBootstrapAttempts] = useState(0);
+
+  const MAX_BOOTSTRAP_ATTEMPTS = 5;
+
+  const startAnonymousBootstrap = useCallback(() => {
+    if (isBootstrappingRef.current || isLoading || isAuthenticated) return;
+
+    isBootstrappingRef.current = true;
+    signIn("anonymous")
+      .then(() => {
+        setBootstrapError(null);
+        setBootstrapAttempts(0);
+        isBootstrappingRef.current = false;
+      })
+      .catch((error: unknown) => {
+        console.error("Anonymous auth bootstrap failed:", error);
+        const message =
+          error instanceof Error && error.message
+            ? error.message
+            : "Anonymous auth bootstrap failed. Check Convex auth environment variables.";
+
+        setBootstrapAttempts((prev) => {
+          const next = prev + 1;
+          if (next >= MAX_BOOTSTRAP_ATTEMPTS) {
+            setBootstrapError(message);
+            isBootstrappingRef.current = false;
+            return next;
+          }
+          const delay = Math.min(1000 * Math.pow(2, next - 1), 8000);
+          window.setTimeout(() => {
+            isBootstrappingRef.current = false;
+            startAnonymousBootstrap();
+          }, delay);
+          return next;
+        });
+      });
+  }, [isLoading, isAuthenticated, signIn]);
 
   useEffect(() => {
-    if (isLoading || isAuthenticated || isBootstrappingRef.current || bootstrapError) return;
-    isBootstrappingRef.current = true;
-    signIn("anonymous").catch((error: unknown) => {
-      console.error("Anonymous auth bootstrap failed:", error);
-      const message =
-        error instanceof Error && error.message
-          ? error.message
-          : "Anonymous auth bootstrap failed. Check Convex auth environment variables.";
-      setBootstrapError(message);
-      isBootstrappingRef.current = false;
-    });
-  }, [isLoading, isAuthenticated, signIn, bootstrapError]);
+    if (bootstrapError || isLoading || isAuthenticated) return;
+    startAnonymousBootstrap();
+  }, [bootstrapError, isLoading, isAuthenticated, startAnonymousBootstrap]);
 
   if (bootstrapError) {
     return (
@@ -67,6 +96,21 @@ function AuthBootstrap({ children }: { children: ReactNode }) {
             and functions are deployed.
           </p>
           <pre className="mt-4 max-h-48 overflow-auto rounded bg-muted p-3 text-xs">{bootstrapError}</pre>
+          <div className="mt-4 flex items-center justify-between gap-3">
+            <p className="text-xs text-muted-foreground">
+              Attempts: {bootstrapAttempts}/{MAX_BOOTSTRAP_ATTEMPTS}
+            </p>
+            <Button
+              onClick={() => {
+                setBootstrapError(null);
+                setBootstrapAttempts(0);
+                isBootstrappingRef.current = false;
+                startAnonymousBootstrap();
+              }}
+            >
+              Retry Authentication
+            </Button>
+          </div>
         </div>
       </div>
     );

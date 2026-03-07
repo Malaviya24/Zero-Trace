@@ -23,6 +23,7 @@ import { toast } from "sonner";
 import { useNavigate, useLocation } from "react-router";
 import QRCode from "qrcode";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { useAuthActions } from "@convex-dev/auth/react";
 
 export default function CreateRoom() {
   const navigate = useNavigate();
@@ -56,6 +57,10 @@ export default function CreateRoom() {
   }, [createdRoom]);
 
   const createRoomMutation = useMutation((api as any).rooms.createRoom);
+  const { signIn } = useAuthActions();
+
+  const isAuthFailure = (message: string) =>
+    /unauthorized|failed to authenticate|auth provider discovery|unauthenticated/i.test(message);
 
   const validateRoomName = (value: string): string | null => {
     if (value.length > 50) return "Room name must be 50 characters or fewer.";
@@ -98,10 +103,9 @@ export default function CreateRoom() {
     setIsCreating(true);
     setApiError(null);
     
-    try {
+    const createRoomOnce = async () => {
       const roomId = ChatCrypto.generateRoomId();
       let passwordHash: string | undefined;
-      // Add: capture salt to send to server for later verification
       let passwordSalt: string | undefined;
 
       if (password) {
@@ -114,24 +118,21 @@ export default function CreateRoom() {
         roomId,
         name: roomName || undefined,
         passwordHash,
-        // Add: send passwordSalt
         passwordSalt,
         maxParticipants,
         settings,
       });
 
       const finalRoomId = result.roomId;
-
-      // Use RoomService to generate invite link
-      const roomService = new (await import('@/services/RoomService')).RoomService(finalRoomId);
+      const roomService = new (await import("@/services/RoomService")).RoomService(finalRoomId);
       await roomService.getEncryptionService().generateKey();
       const roomLink = await roomService.generateInviteLink(window.location.origin);
       const qrCodeDataUrl = await QRCode.toDataURL(roomLink, {
         width: 200,
         margin: 2,
         color: {
-          dark: '#000000',
-          light: '#ffffff',
+          dark: "#000000",
+          light: "#ffffff",
         },
       });
 
@@ -140,11 +141,30 @@ export default function CreateRoom() {
         link: roomLink,
         qrCode: qrCodeDataUrl,
       });
+    };
 
+    try {
+      await createRoomOnce();
       toast.success("Room created successfully!");
     } catch (error) {
       console.error("Create room error:", error);
       const message = error instanceof Error ? error.message : "Failed to create room";
+
+      if (isAuthFailure(message)) {
+        try {
+          await signIn("anonymous");
+          await createRoomOnce();
+          toast.success("Room created successfully!");
+          return;
+        } catch (retryError) {
+          const retryMessage =
+            retryError instanceof Error ? retryError.message : "Failed after re-authentication";
+          setApiError(retryMessage);
+          toast.error(retryMessage);
+          return;
+        }
+      }
+
       setApiError(message);
       toast.error(message);
     } finally {
@@ -193,7 +213,14 @@ export default function CreateRoom() {
           </p>
         </CardHeader>
         
-        <CardContent className="space-y-6">
+        <CardContent>
+          <form
+            className="space-y-6"
+            onSubmit={(e) => {
+              e.preventDefault();
+              void handleCreateRoom();
+            }}
+          >
           {/* Add: API/server error alert */}
           {apiError && (
             <Alert variant="destructive">
@@ -340,7 +367,7 @@ export default function CreateRoom() {
           </div>
 
           <Button
-            onClick={handleCreateRoom}
+            type="submit"
             disabled={isCreating || !isFormValid().ok}
             className="w-full"
           >
@@ -356,6 +383,7 @@ export default function CreateRoom() {
               </>
             )}
           </Button>
+          </form>
         </CardContent>
       </Card>
 
