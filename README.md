@@ -1,6 +1,6 @@
 # Zero-Trace
 
-**Secure, anonymous chat rooms with end-to-end encryption and real-time voice calls.**
+**Secure, anonymous chat rooms with end-to-end encryption and real-time room voice calls.**
 
 Zero-Trace lets anyone create or join encrypted chat rooms without signing up. Messages are encrypted client-side, identities are anonymous, and rooms can be shared via link or QR code. Built-in WebRTC calling brings voice communication directly into the chat.
 
@@ -26,7 +26,7 @@ Zero-Trace lets anyone create or join encrypted chat rooms without signing up. M
 
 ### Calling
 - **WebRTC voice calls** — Peer-to-peer audio calls directly in the browser
-- **Group calls** — Mesh topology supporting multiple participants
+- **Room calls** — Mesh topology supporting multiple participants
 - **Perfect negotiation** — Proper glare handling to prevent connection deadlocks
 - **ICE restart** — Automatic recovery from network changes
 - **Call notifications** — In-chat banner when someone starts a call
@@ -113,7 +113,7 @@ src/
 ├── pages/               # Route pages
 │   ├── Home.tsx         # Landing page
 │   ├── RoomPage.tsx     # Chat room wrapper
-│   ├── GroupCallPage.tsx # WebRTC call interface
+│   ├── GroupCallPage.tsx # WebRTC room call interface
 │   └── NotFound.tsx     # 404 page
 ├── services/            # Session management
 ├── store/               # Zustand stores (call state)

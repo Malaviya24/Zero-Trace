@@ -10,6 +10,7 @@ import { useNavigate } from "react-router";
 import { CallManager, useCall } from "@/call";
 import { typedApi } from "@/lib/api-types";
 import { mergeCachedMessages, resolveRemoteCallName, shouldResetCallOverlay } from "@/lib/call-chat-utils";
+import { captureCallReturnPath } from "@/lib/call-navigation";
 
 // CometChat Components
 import { CometChatLayout } from "./CometChatLayout";
@@ -31,7 +32,7 @@ interface Message {
   senderName: string;
   senderAvatar: string;
   content: string;
-  messageType: "text" | "system" | "join" | "leave";
+  messageType: "text" | "image" | "file" | "audio" | "system" | "join" | "leave";
   isRead: boolean;
   readAt?: number;
   selfDestructAt?: number;
@@ -115,11 +116,37 @@ export default function CometChatRoom({ roomId, displayName, encryptionKey, part
   const [dismissedCallIds, setDismissedCallIds] = useState<Set<string>>(new Set());
   const [messageCache, setMessageCache] = useState<Message[]>(() => readMessageCacheFromStorage(roomId));
   const [decryptedMessages, setDecryptedMessages] = useState<CometMessage[]>([]);
+  const [pendingMessages, setPendingMessages] = useState<CometMessage[]>([]);
   
   const incomingHandledRef = useRef<Set<string>>(new Set());
   const lastTypingSentRef = useRef<number>(0);
   const roomMissingSinceRef = useRef<number | null>(null);
   const participantMissingSinceRef = useRef<number | null>(null);
+  const pendingMessagesRef = useRef<CometMessage[]>([]);
+
+  const removePendingMessage = useCallback((pendingId: string) => {
+    setPendingMessages((prev) => {
+      const pending = prev.find((m) => m._id === pendingId);
+      if (pending?.storageId?.startsWith("blob:")) {
+        URL.revokeObjectURL(pending.storageId);
+      }
+      return prev.filter((m) => m._id !== pendingId);
+    });
+  }, []);
+
+  useEffect(() => {
+    pendingMessagesRef.current = pendingMessages;
+  }, [pendingMessages]);
+
+  useEffect(() => {
+    return () => {
+      pendingMessagesRef.current.forEach((message) => {
+        if (message.storageId?.startsWith("blob:")) {
+          URL.revokeObjectURL(message.storageId);
+        }
+      });
+    };
+  }, []);
 
   // --- Effects & Logic ---
 
@@ -157,13 +184,25 @@ export default function CometChatRoom({ roomId, displayName, encryptionKey, part
     [messageCache, messages]
   );
 
+  const displayedMessages = useMemo(
+    () =>
+      [...decryptedMessages, ...pendingMessages].sort(
+        (a, b) => a.createdAt - b.createdAt
+      ),
+    [decryptedMessages, pendingMessages]
+  );
+
   // Decrypt Messages
   useEffect(() => {
     const decryptAll = async () => {
       const promises = visibleMessages.map(async (msg) => {
         let content = msg.content;
+        const normalizedType =
+          msg.messageType === "join" || msg.messageType === "leave"
+            ? "system"
+            : msg.messageType;
 
-        if (['text', 'image', 'file', 'audio'].includes(msg.messageType)) {
+        if (["text", "image", "file", "audio"].includes(normalizedType)) {
           try {
             content = await ChatCrypto.decrypt(msg.content, encryptionKey);
           } catch {
@@ -201,10 +240,10 @@ export default function CometChatRoom({ roomId, displayName, encryptionKey, part
           createdAt: msg._creationTime,
           isMe: msg.senderName === displayName,
           isRead: msg.isRead,
-          type: msg.messageType as 'text' | 'system' | 'image' | 'file' | 'audio',
+          type: normalizedType as 'text' | 'system' | 'image' | 'file' | 'audio',
           reactions,
           storageId: (msg as any).fileUrl || (msg as any).storageId,
-          fileName: (msg as any).fileName || (msg.messageType !== "text" ? content : undefined),
+          fileName: (msg as any).fileName || (normalizedType !== "text" && normalizedType !== "system" ? content : undefined),
           fileSize: undefined,
           mimeType: undefined,
           isEncryptedFile: true,
@@ -308,6 +347,33 @@ export default function CometChatRoom({ roomId, displayName, encryptionKey, part
 
   const handleSendMessage = async (content: string, type: 'text' | 'image' | 'file' | 'audio', file?: File) => {
     if (!encryptionKey) return;
+    const pendingId = `pending-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const pendingBlobUrl =
+      file && (type === "image" || type === "file")
+        ? URL.createObjectURL(file)
+        : undefined;
+
+    setPendingMessages((prev) => [
+      ...prev,
+      {
+        _id: pendingId,
+        content,
+        senderId: user?._id as string | undefined,
+        senderName: displayName,
+        senderAvatar: "",
+        createdAt: Date.now(),
+        isMe: true,
+        isRead: false,
+        status: "sending",
+        type,
+        storageId: pendingBlobUrl,
+        fileName: file?.name,
+        fileSize: file?.size,
+        mimeType: file?.type,
+        isEncryptedFile: false,
+      },
+    ]);
+
     try {
       let storageId: string | undefined;
       let encryptedContent = content;
@@ -349,6 +415,7 @@ export default function CometChatRoom({ roomId, displayName, encryptionKey, part
         storageId,
         replyTo: replyTo?._id,
       });
+      removePendingMessage(pendingId);
       setReplyTo(null); // Clear reply state
       setKeyRotationCount((prev) => {
         const next = prev + 1;
@@ -360,6 +427,7 @@ export default function CometChatRoom({ roomId, displayName, encryptionKey, part
       });
       emitTyping(false);
     } catch (error) {
+      removePendingMessage(pendingId);
       console.error(error);
       toast.error("Failed to send");
     }
@@ -517,9 +585,11 @@ export default function CometChatRoom({ roomId, displayName, encryptionKey, part
           roomName={room.name || "Chat Room"}
           subtitle={`${onlineCount} members active`}
           onlineCount={onlineCount}
+          onToggleSidebar={() => setIsSidebarMobileOpen(true)}
           onCall={(video) => {
             sessionStorage.setItem("call_display_name", displayName);
             sessionStorage.setItem("call_room_id", roomId);
+            captureCallReturnPath(roomId);
             navigate(`/call/new?video=${video}`);
           }}
           isAdmin={isAdmin}
@@ -532,7 +602,7 @@ export default function CometChatRoom({ roomId, displayName, encryptionKey, part
         />
 
         <CometChatMessageList
-          messages={decryptedMessages}
+          messages={displayedMessages}
           onReact={handleReaction}
           onEdit={handleEditMessage}
           onDelete={handleDeleteMessage}
@@ -561,6 +631,7 @@ export default function CometChatRoom({ roomId, displayName, encryptionKey, part
           if (!currentActiveCall) return;
           sessionStorage.setItem("call_display_name", displayName);
           sessionStorage.setItem("call_room_id", roomId);
+          captureCallReturnPath(roomId);
           setDismissedCallIds(prev => new Set(prev).add(currentActiveCall._id));
           navigate(`/call/${currentActiveCall._id}`);
         }}

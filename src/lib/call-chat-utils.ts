@@ -10,9 +10,16 @@ export type ParticipantLike = {
 };
 
 export function mergeCachedMessages<T extends CachedMessage>(previous: T[], incoming?: T[]): T[] {
-  if (!incoming || incoming.length === 0) {
+  if (!incoming) {
     return previous;
   }
+  // Resilience: transient empty payloads can happen during auth/socket refresh.
+  // Don't wipe UI history on those momentary states.
+  if (incoming.length === 0) {
+    return previous;
+  }
+
+  // Merge incoming with cache by id and keep chronological order.
   const byId = new Map<string, T>();
   previous.forEach((message) => byId.set(String(message._id), message));
   incoming.forEach((message) => byId.set(String(message._id), message));

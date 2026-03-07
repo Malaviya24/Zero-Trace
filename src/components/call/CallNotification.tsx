@@ -3,6 +3,7 @@ import { Phone, X } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { useNavigate } from "react-router";
 import { useState } from "react";
+import { captureCallReturnPath } from "@/lib/call-navigation";
 
 interface CallNotificationProps {
   callId: string;
@@ -36,6 +37,7 @@ export function CallNotification({ callId, callerName, roomId, displayName, onDi
     if (roomId) {
       sessionStorage.setItem("call_room_id", roomId);
     }
+    captureCallReturnPath(roomId);
     navigate(`/call/${callId}`);
   };
 

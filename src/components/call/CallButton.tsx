@@ -5,6 +5,7 @@ import { useNavigate } from "react-router";
 import { useMutation } from "@/lib/convex-helpers";
 import { typedApi } from "@/lib/api-types";
 import { toast } from "sonner";
+import { captureCallReturnPath } from "@/lib/call-navigation";
 
 interface CallButtonProps {
   roomId: string;
@@ -30,6 +31,7 @@ export function CallButton({ roomId, displayName }: CallButtonProps) {
       sessionStorage.setItem("call_display_name", name);
       sessionStorage.setItem("call_room_id", roomId);
       sessionStorage.setItem("outgoing_call_id", String(callId));
+      captureCallReturnPath(roomId);
 
       navigate(`/call/${callId}`);
     } catch (error) {

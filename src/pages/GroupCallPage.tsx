@@ -19,6 +19,7 @@ import { parseSignalPayload } from "@/call/signalingPayload";
 import { filterOtherParticipants, getUniqueCallParticipants, getDisplayNameForCall } from "@/lib/call-chat-utils";
 import { applyHoldToStream, buildTransferUrl } from "@/lib/call-ui-utils";
 import { useAudioOutputDevice } from "@/hooks/useAudioOutputDevice";
+import { clearCallReturnPath, resolveCallReturnPath } from "@/lib/call-navigation";
 
 type JoinCallResult = {
   participantId: Id<"callParticipants">;
@@ -178,9 +179,8 @@ function GroupCallPageContent() {
     const resolvedRoomId = sessionRoomId || callRoomId || null;
     if (resolvedRoomId) {
       sessionStorage.setItem("call_room_id", resolvedRoomId);
-      return `/room/${resolvedRoomId}`;
     }
-    return "/";
+    return resolveCallReturnPath(resolvedRoomId ?? undefined);
   }, [call?.roomId]);
   const resolveDisplayName = useCallback(() => {
     const savedName = sessionStorage.getItem("call_display_name");
@@ -289,6 +289,7 @@ function GroupCallPageContent() {
       if (hasNavigatedRef.current) return;
       hasNavigatedRef.current = true;
       actions.reset();
+      clearCallReturnPath();
       navigate(targetPath);
     }, 1200);
     return () => window.clearTimeout(timeoutId);
@@ -616,7 +617,9 @@ function GroupCallPageContent() {
 
     actions.reset();
     hasNavigatedRef.current = true;
-    navigate(getReturnPath());
+    const targetPath = getReturnPath();
+    clearCallReturnPath();
+    navigate(targetPath);
   };
 
   const handleToggleAudio = () => {

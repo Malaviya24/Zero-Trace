@@ -517,7 +517,7 @@ export default function Landing() {
           <p className="text-xs text-muted-foreground text-center">
             Built with privacy in mind. No tracking, no analytics, no data collection.
           </p>
-          <p className="text-xs text-muted-foreground">© 2025 Zero-Trace</p>
+          <p className="text-xs text-muted-foreground">© 2026 Zero-Trace</p>
         </div>
       </motion.footer>
 

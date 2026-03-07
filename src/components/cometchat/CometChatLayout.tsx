@@ -1,7 +1,5 @@
 import React from 'react';
 import { cn } from "@/lib/utils";
-import { Menu } from 'lucide-react';
-import { Button } from "@/components/ui/button";
 
 interface CometChatLayoutProps {
   children: React.ReactNode;
@@ -40,14 +38,6 @@ export function CometChatLayout({
 
       {/* Main Chat Area */}
       <main className="flex-1 flex flex-col relative min-w-0 bg-white/50 dark:bg-slate-950/50 backdrop-blur-sm">
-        {/* Mobile Header Trigger */}
-        <div className="md:hidden flex items-center p-4 border-b border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900">
-          <Button variant="ghost" size="icon" onClick={onToggleSidebar} className="-ml-2">
-            <Menu className="h-6 w-6" />
-          </Button>
-          <span className="ml-2 font-semibold">Chats</span>
-        </div>
-        
         {children}
       </main>
 

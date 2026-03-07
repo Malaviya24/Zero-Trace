@@ -324,7 +324,9 @@ export const toggleReaction = mutation({
       ]);
 
       if (!message) {
-        throw new Error("Message not found");
+        // Message may have been deleted/expired after the UI rendered it.
+        // Treat this as a no-op to avoid noisy server errors.
+        return { messageId: args.messageId, reactions: [], ignored: true as const };
       }
       // Allow reactions on all message types now
       // if (message.messageType !== "text") {
@@ -365,8 +367,17 @@ export const toggleReaction = mutation({
               },
             ];
 
-      await ctx.db.patch(args.messageId, { reactions });
-      return { messageId: args.messageId, reactions };
+      try {
+        await ctx.db.patch(args.messageId, { reactions });
+      } catch (patchError) {
+        const errorMessage =
+          patchError instanceof Error ? patchError.message.toLowerCase() : "";
+        if (errorMessage.includes("not found") || errorMessage.includes("does not exist")) {
+          return { messageId: args.messageId, reactions: [], ignored: true as const };
+        }
+        throw patchError;
+      }
+      return { messageId: args.messageId, reactions, ignored: false as const };
     } catch (e) {
       handleConvexError("messages.toggleReaction", e);
     }

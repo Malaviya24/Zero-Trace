@@ -1,7 +1,7 @@
 import React, { useRef, useEffect, useState } from 'react';
 import { format } from 'date-fns';
 import { cn } from "@/lib/utils";
-import { CheckCheck, SmilePlus, Reply, FileIcon, Download, Play } from 'lucide-react';
+import { CheckCheck, Clock3, SmilePlus, Reply, FileIcon, Download, Play } from 'lucide-react';
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import {
@@ -42,6 +42,7 @@ export interface Message {
   createdAt: number;
   isMe: boolean;
   isRead?: boolean;
+  status?: 'sending' | 'sent';
   type: 'text' | 'image' | 'file' | 'system' | 'audio';
   reactions?: Array<{ emoji: string; count: number; reactedByMe: boolean }>;
   storageId?: string;
@@ -223,7 +224,7 @@ function MessageBubble({
     <div 
       id={`message-${message._id}`}
       className={cn(
-        "flex w-full group relative mb-1 select-none",
+        "flex w-full group relative mb-1 select-none animate-in fade-in slide-in-from-bottom-1 duration-200",
         message.isMe ? "justify-end" : "justify-start"
       )}
       {...handlers}
@@ -413,12 +414,18 @@ function MessageBubble({
                 {format(message.createdAt, 'h:mm a')}
               </span>
               {message.isMe && (
-                <span className={cn(
-                  "ml-0.5",
-                  message.isRead ? "text-[#53bdeb]" : "text-[#8696a0]"
-                )}>
-                  <CheckCheck className="h-3.5 w-3.5" />
-                </span>
+                message.status === "sending" ? (
+                  <span className="ml-0.5 text-[#8696a0] animate-pulse">
+                    <Clock3 className="h-3.5 w-3.5" />
+                  </span>
+                ) : (
+                  <span className={cn(
+                    "ml-0.5",
+                    message.isRead ? "text-[#53bdeb]" : "text-[#8696a0]"
+                  )}>
+                    <CheckCheck className="h-3.5 w-3.5" />
+                  </span>
+                )
               )}
             </div>
           </div>

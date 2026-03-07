@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { Input } from "@/components/ui/input";
 import { 
+  Menu,
   Phone, 
   Video, 
   MoreVertical, 
@@ -31,6 +32,7 @@ interface CometChatHeaderProps {
   onCall?: (video: boolean) => void;
   onSearch?: () => void;
   onMore?: () => void;
+  onToggleSidebar?: () => void;
   // Admin actions
   isAdmin?: boolean;
   onClearChat?: () => void;
@@ -46,6 +48,7 @@ export function CometChatHeader({
   onlineCount,
   onCall,
   onSearch,
+  onToggleSidebar,
   isAdmin,
   onClearChat,
   onDeleteRoom,
@@ -67,9 +70,23 @@ export function CometChatHeader({
       
       {/* Left: Info */}
       <div className="flex items-center gap-3 min-w-0 flex-1">
+        <Button
+          variant="ghost"
+          size="icon"
+          className="h-9 w-9 rounded-full text-slate-500 hover:text-slate-900 dark:hover:text-slate-100 md:hidden"
+          onClick={onToggleSidebar}
+          aria-label="Open room details"
+        >
+          <Menu className="h-5 w-5" />
+        </Button>
         {!isSearchOpen ? (
           <>
-            <div className="relative">
+            <button
+              type="button"
+              className="flex items-center gap-3 min-w-0 flex-1 text-left"
+              onClick={onToggleSidebar}
+            >
+            <div className="relative shrink-0">
               <Avatar className="h-10 w-10 ring-2 ring-slate-100 dark:ring-slate-800 shadow-sm">
                 <AvatarImage src={avatar} />
                 <AvatarFallback className="bg-primary/10 text-primary font-bold">
@@ -89,13 +106,14 @@ export function CometChatHeader({
                   {roomName}
                 </h2>
                 <Badge variant="secondary" className="h-5 px-1.5 text-[10px] font-normal bg-slate-100 dark:bg-slate-800 text-slate-500">
-                  Group
+                  Room
                 </Badge>
               </div>
-              <p className="text-xs text-slate-500 dark:text-slate-400 truncate">
-                {subtitle || "Tap here for group info"}
-              </p>
-            </div>
+                <p className="text-xs text-slate-500 dark:text-slate-400 truncate">
+                  {subtitle || "Tap here for room info"}
+                </p>
+              </div>
+            </button>
           </>
         ) : (
           <div className="flex-1 flex items-center gap-2 animate-in fade-in slide-in-from-top-1">
@@ -153,7 +171,7 @@ export function CometChatHeader({
             </Button>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end" className="w-56">
-            <DropdownMenuLabel>Group Actions</DropdownMenuLabel>
+            <DropdownMenuLabel>Room Actions</DropdownMenuLabel>
             <DropdownMenuItem onClick={onCopyInvite}>
               <Copy className="mr-2 h-4 w-4" /> Copy Invite Link
             </DropdownMenuItem>
@@ -179,7 +197,7 @@ export function CometChatHeader({
             
             <DropdownMenuSeparator />
             <DropdownMenuItem onClick={onLeaveRoom} className="text-red-500 focus:text-red-500">
-              <LogOut className="mr-2 h-4 w-4" /> Leave Group
+              <LogOut className="mr-2 h-4 w-4" /> Leave Room
             </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>
