@@ -25,6 +25,11 @@ interface CometMessage extends CometMessageBase {
     content: string;
     type: 'text' | 'image' | 'file' | 'audio' | 'system';
   };
+  replyToPreview?: {
+    senderName: string;
+    content: string;
+    type: 'text' | 'image' | 'file' | 'audio' | 'system';
+  };
 }
 
 interface Message {
@@ -144,33 +149,6 @@ export default function CometChatRoom({ roomId, displayName, encryptionKey, part
     pendingMessagesRef.current = pendingMessages;
   }, [pendingMessages]);
 
-  const removeMessageFromState = useCallback(
-    (messageId: string) => {
-      setMessageCache((prev) => {
-        const next = prev.filter((message) => String(message._id) !== messageId);
-        try {
-          sessionStorage.setItem(
-            `room_message_cache_${roomId}`,
-            JSON.stringify({ cachedAt: Date.now(), messages: next })
-          );
-        } catch (error) {
-          console.warn("Failed to update cache:", error);
-        }
-        return next;
-      });
-      setDecryptedMessages((prev) => prev.filter((message) => String(message._id) !== messageId));
-      setPendingMessages((prev) => {
-        const target = prev.find((message) => String(message._id) === messageId);
-        if (target?.storageId?.startsWith("blob:")) {
-          URL.revokeObjectURL(target.storageId);
-        }
-        return prev.filter((message) => String(message._id) !== messageId);
-      });
-      setReplyTo((prev) => (prev?._id === messageId ? null : prev));
-    },
-    [roomId]
-  );
-
   useEffect(() => {
     return () => {
       pendingMessagesRef.current.forEach((message) => {
@@ -234,6 +212,9 @@ export default function CometChatRoom({ roomId, displayName, encryptionKey, part
           msg.messageType === "join" || msg.messageType === "leave"
             ? "system"
             : msg.messageType;
+        const rawReplyToPreview = (msg as any).replyToPreview as
+          | { senderName: string; content: string; type: 'text' | 'image' | 'file' | 'audio' | 'system' }
+          | undefined;
 
         if (["text", "image", "file", "audio"].includes(normalizedType)) {
           try {
@@ -241,6 +222,23 @@ export default function CometChatRoom({ roomId, displayName, encryptionKey, part
           } catch {
             content = '[Encrypted Message]';
           }
+        }
+
+        let replyToPreview: CometMessage["replyToPreview"] | undefined;
+        if (rawReplyToPreview) {
+          let previewContent = rawReplyToPreview.content;
+          if (["text", "image", "file", "audio"].includes(rawReplyToPreview.type)) {
+            try {
+              previewContent = await ChatCrypto.decrypt(rawReplyToPreview.content, encryptionKey);
+            } catch {
+              previewContent = "[Encrypted Message]";
+            }
+          }
+          replyToPreview = {
+            senderName: rawReplyToPreview.senderName,
+            content: previewContent,
+            type: rawReplyToPreview.type,
+          };
         }
         
         // Map reactions
@@ -281,7 +279,8 @@ export default function CometChatRoom({ roomId, displayName, encryptionKey, part
           mimeType: undefined,
           isEncryptedFile: true,
           replyTo: (msg as any).replyTo,
-          replyToMessage: undefined
+          replyToMessage: undefined,
+          replyToPreview,
         };
       });
       
@@ -290,13 +289,15 @@ export default function CometChatRoom({ roomId, displayName, encryptionKey, part
       // Second pass to resolve reply content
       const finalResults = results.map(msg => {
         if (msg.replyTo) {
-          const parent = results.find(p => p._id === msg.replyTo);
+          const parent = results.find(p => String(p._id) === String(msg.replyTo));
           if (parent) {
              (msg as CometMessage).replyToMessage = {
                senderName: parent.senderName,
                content: parent.content,
                type: parent.type
              };
+          } else if ((msg as CometMessage).replyToPreview) {
+             (msg as CometMessage).replyToMessage = (msg as CometMessage).replyToPreview;
           }
         }
         return msg as CometMessage;
@@ -508,17 +509,18 @@ export default function CometChatRoom({ roomId, displayName, encryptionKey, part
       });
 
       if ((result as any)?.ignored === true) {
-        removeMessageFromState(messageId);
+        // Late/stale signals should not mutate local history for this user only.
+        return;
       }
     } catch (error) {
       const message = error instanceof Error ? error.message.toLowerCase() : "";
       if (message.includes("message not found") || message.includes("does not exist")) {
-        removeMessageFromState(messageId);
+        // Do not locally delete messages on reaction race conditions.
         return;
       }
       toast.error("Failed to react");
     }
-  }, [displayedMessages, participantId, removeMessageFromState, toggleReactionMutation]);
+  }, [displayedMessages, participantId, toggleReactionMutation]);
 
   const handleLeaveRoom = async () => {
     try {

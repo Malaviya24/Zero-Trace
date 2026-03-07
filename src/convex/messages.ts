@@ -80,10 +80,12 @@ export const sendMessage = mutation({
       const selfDestructAt = args.selfDestruct ? now + 10 * 60 * 1000 : undefined; // 10 minutes
       let resolvedReplyTo: Id<"messages"> | undefined;
 
-      if (args.replyTo) {
+      const rawReplyTo = args.replyTo?.trim();
+      if (rawReplyTo) {
         // Best-effort: invalid or stale reply ids should not block sending the new message.
-        try {
-          const parent = await ctx.db.get(args.replyTo as Id<"messages">);
+        const normalizedReplyTo = ctx.db.normalizeId("messages", rawReplyTo);
+        if (normalizedReplyTo) {
+          const parent = await ctx.db.get(normalizedReplyTo);
           if (
             parent &&
             parent.roomId === args.roomId &&
@@ -92,8 +94,6 @@ export const sendMessage = mutation({
           ) {
             resolvedReplyTo = parent._id;
           }
-        } catch {
-          resolvedReplyTo = undefined;
         }
       }
 
@@ -181,16 +181,57 @@ export const getRoomMessages = query({
         (m) => m.expiresAt > now && (!m.selfDestructAt || m.selfDestructAt > now)
       );
 
-      // Enhance with storage URLs
+      const windowMessages = visible.slice(Math.max(0, visible.length - limit));
+
+      // Resolve parent snapshots for reply messages so clients can always render reply UI
+      // even when the parent is outside the current window.
+      const visibleById = new Map<string, (typeof windowMessages)[number]>(
+        windowMessages.map((message) => [String(message._id), message])
+      );
+      const replyParentMap = new Map<string, (typeof windowMessages)[number]>();
+      const replyParentIds = Array.from(
+        new Set(windowMessages.map((message) => message.replyTo).filter(Boolean))
+      ) as Id<"messages">[];
+
+      for (const parentId of replyParentIds) {
+        const fromWindow = visibleById.get(String(parentId));
+        const parent = fromWindow ?? (await ctx.db.get(parentId));
+        if (
+          parent &&
+          parent.roomId === args.roomId &&
+          parent.expiresAt > now &&
+          (!parent.selfDestructAt || parent.selfDestructAt > now)
+        ) {
+          replyParentMap.set(String(parentId), parent);
+        }
+      }
+
+      // Enhance with storage URLs and reply previews
       const enhancedMessages = await Promise.all(
-        visible.slice(Math.max(0, visible.length - limit)).map(async (msg) => {
+        windowMessages.map(async (msg) => {
+          const parent = msg.replyTo ? replyParentMap.get(String(msg.replyTo)) : undefined;
+          const replyToPreview = parent
+            ? {
+                senderName: parent.senderName,
+                content: parent.content,
+                type:
+                  parent.messageType === "join" || parent.messageType === "leave"
+                    ? "system"
+                    : parent.messageType,
+              }
+            : undefined;
+
           if (msg.storageId) {
             return {
               ...msg,
               fileUrl: await ctx.storage.getUrl(msg.storageId),
+              replyToPreview,
             };
           }
-          return msg;
+          return {
+            ...msg,
+            replyToPreview,
+          };
         })
       );
 

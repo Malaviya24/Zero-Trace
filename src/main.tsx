@@ -202,7 +202,7 @@ const MissingConfig = () => (
 
 const app = (
   <StrictMode>
-    <VlyToolbar />
+    {import.meta.env.DEV ? <VlyToolbar /> : null}
     <InstrumentationProvider>
       <AppReady onReady={dismissSplash} />
       {hasConvex && convex ? (
