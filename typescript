@@ -1,6 +1,0 @@
-if (call.status === "idle") {
-  await ctx.db.patch(args.callId, {
-    status: "active",
-    startedAt: now,
-  });
-}
