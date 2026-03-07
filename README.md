@@ -77,10 +77,11 @@ pnpm install
 # Set up Convex backend
 npx convex login
 npx convex init        # Create a new project
-npx convex deploy      # Deploy backend functions
+npm run convex:deploy:prod   # Deploy backend functions to production target
 
 # Create environment file
-echo "VITE_CONVEX_URL=https://your-project.convex.cloud" > .env
+cp .env.example .env
+# Then set VITE_CONVEX_URL and VITE_CONVEX_SITE_URL to your production Convex URLs
 
 # Start development server
 pnpm dev
@@ -143,6 +144,16 @@ src/
 
 ## Deployment
 
+### Convex Targeting (Production vs Development)
+
+- This repo uses explicit Convex target files:
+  - `.env.convex.dev` -> development deployment (`agile-jackal-877`)
+  - `.env.convex.prod` -> production deployment (`festive-finch-304`)
+- Use target-safe scripts so production and development never get mixed.
+- In your frontend hosting (Vercel/Netlify), always set:
+  - `VITE_CONVEX_URL` to your production Convex cloud URL
+  - `VITE_CONVEX_SITE_URL` to your production Convex site URL
+
 ### Production Build
 
 ```bash
@@ -183,6 +194,8 @@ See **[DEPLOYMENT_GUIDE.md](DEPLOYMENT_GUIDE.md)** for step-by-step instructions
 | Variable | Required | Description |
 |---|---|---|
 | `VITE_CONVEX_URL` | Yes | Convex deployment URL |
+| `VITE_CONVEX_SITE_URL` | Yes | Convex site URL used by auth provider discovery |
+| `VITE_STUN_URLS` | No | Comma-separated STUN URLs for WebRTC |
 
 ---
 
@@ -195,7 +208,11 @@ See **[DEPLOYMENT_GUIDE.md](DEPLOYMENT_GUIDE.md)** for step-by-step instructions
 | `pnpm preview` | Preview production build locally |
 | `pnpm lint` | Run ESLint |
 | `pnpm format` | Format code with Prettier |
-| `npx convex deploy` | Deploy Convex backend functions |
+| `npm run convex:dev` | Run Convex dev watcher against dev deployment target |
+| `npm run convex:push:dev` | One-time push to dev deployment target |
+| `npm run convex:deploy:prod` | Deploy Convex functions to production target |
+| `npm run convex:env:dev` | List env vars from dev deployment |
+| `npm run convex:env:prod` | List env vars from production deployment |
 
 ---
 

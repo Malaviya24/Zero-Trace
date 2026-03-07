@@ -9,7 +9,12 @@
     "lint": "eslint .",
     "test": "vitest run",
     "format": "prettier --write .",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "convex:dev": "convex dev --env-file .env.convex.dev",
+    "convex:push:dev": "convex dev --once --env-file .env.convex.dev",
+    "convex:deploy:prod": "convex deploy -y --env-file .env.convex.prod",
+    "convex:env:dev": "convex env list --env-file .env.convex.dev",
+    "convex:env:prod": "convex env list --env-file .env.convex.prod"
   },
   "dependencies": {
     "@convex-dev/auth": "^0.0.86",
