@@ -28,6 +28,28 @@ describe("mergeCachedMessages", () => {
     const merged = mergeCachedMessages(previous, incoming);
     expect(merged.map((message) => message._id)).toEqual(["m1", "m2", "m3"]);
   });
+
+  it("prunes expired or self-destructed cached messages", () => {
+    const now = Date.now();
+    const previous = [
+      { _id: "alive", _creationTime: 1, expiresAt: now + 60_000 },
+      { _id: "expired", _creationTime: 2, expiresAt: now - 1 },
+      { _id: "destructed", _creationTime: 3, selfDestructAt: now - 1 },
+    ];
+    const merged = mergeCachedMessages(previous, []);
+    expect(merged.map((message) => message._id)).toEqual(["alive"]);
+  });
+
+  it("limits merged cache size to latest 600 messages", () => {
+    const previous = Array.from({ length: 700 }).map((_, index) => ({
+      _id: `m${index + 1}`,
+      _creationTime: index + 1,
+    }));
+    const merged = mergeCachedMessages(previous, previous);
+    expect(merged).toHaveLength(600);
+    expect(merged[0]._id).toBe("m101");
+    expect(merged.at(-1)?._id).toBe("m700");
+  });
 });
 
 describe("resolveRemoteCallName", () => {

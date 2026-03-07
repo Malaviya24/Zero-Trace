@@ -36,6 +36,7 @@ interface Message {
   isRead: boolean;
   readAt?: number;
   selfDestructAt?: number;
+  expiresAt?: number;
   _creationTime: number;
   encryptionKeyId: string;
   senderId?: Id<"users">;
@@ -57,9 +58,13 @@ interface ChatRoomProps {
 }
 
 const MESSAGE_CACHE_TTL_MS = 5 * 60 * 1000;
+const isMessageActive = (message: Message, now = Date.now()) =>
+  (!message.expiresAt || message.expiresAt > now) &&
+  (!message.selfDestructAt || message.selfDestructAt > now);
 
 function readMessageCacheFromStorage(roomId: string): Message[] {
   const cacheKey = `room_message_cache_${roomId}`;
+  const now = Date.now();
   try {
     const raw = sessionStorage.getItem(cacheKey);
     if (!raw) return [];
@@ -71,12 +76,12 @@ function readMessageCacheFromStorage(roomId: string): Message[] {
       Array.isArray(parsed.messages)
     ) {
       if (Date.now() - parsed.cachedAt <= MESSAGE_CACHE_TTL_MS) {
-        return parsed.messages as Message[];
+        return (parsed.messages as Message[]).filter((message) => isMessageActive(message, now));
       }
       sessionStorage.removeItem(cacheKey);
       return [];
     }
-    if (Array.isArray(parsed)) return parsed as Message[];
+    if (Array.isArray(parsed)) return (parsed as Message[]).filter((message) => isMessageActive(message, now));
   } catch {
     // ignore
   }
@@ -117,6 +122,7 @@ export default function CometChatRoom({ roomId, displayName, encryptionKey, part
   const [messageCache, setMessageCache] = useState<Message[]>(() => readMessageCacheFromStorage(roomId));
   const [decryptedMessages, setDecryptedMessages] = useState<CometMessage[]>([]);
   const [pendingMessages, setPendingMessages] = useState<CometMessage[]>([]);
+  const [replyTo, setReplyTo] = useState<CometMessage | null>(null);
   
   const incomingHandledRef = useRef<Set<string>>(new Set());
   const lastTypingSentRef = useRef<number>(0);
@@ -137,6 +143,33 @@ export default function CometChatRoom({ roomId, displayName, encryptionKey, part
   useEffect(() => {
     pendingMessagesRef.current = pendingMessages;
   }, [pendingMessages]);
+
+  const removeMessageFromState = useCallback(
+    (messageId: string) => {
+      setMessageCache((prev) => {
+        const next = prev.filter((message) => String(message._id) !== messageId);
+        try {
+          sessionStorage.setItem(
+            `room_message_cache_${roomId}`,
+            JSON.stringify({ cachedAt: Date.now(), messages: next })
+          );
+        } catch (error) {
+          console.warn("Failed to update cache:", error);
+        }
+        return next;
+      });
+      setDecryptedMessages((prev) => prev.filter((message) => String(message._id) !== messageId));
+      setPendingMessages((prev) => {
+        const target = prev.find((message) => String(message._id) === messageId);
+        if (target?.storageId?.startsWith("blob:")) {
+          URL.revokeObjectURL(target.storageId);
+        }
+        return prev.filter((message) => String(message._id) !== messageId);
+      });
+      setReplyTo((prev) => (prev?._id === messageId ? null : prev));
+    },
+    [roomId]
+  );
 
   useEffect(() => {
     return () => {
@@ -343,8 +376,6 @@ export default function CometChatRoom({ roomId, displayName, encryptionKey, part
   const generateUploadUrlMutation = useMutation((api as any).messages.generateUploadUrl);
 
   // Handlers
-  const [replyTo, setReplyTo] = useState<CometMessage | null>(null);
-
   const handleSendMessage = async (content: string, type: 'text' | 'image' | 'file' | 'audio', file?: File) => {
     if (!encryptionKey) return;
     const pendingId = `pending-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
@@ -465,16 +496,29 @@ export default function CometChatRoom({ roomId, displayName, encryptionKey, part
   }, [roomId, setTypingMutation]);
 
   const handleReaction = useCallback(async (messageId: string, emoji: string) => {
+    if (!messageId || messageId.startsWith("pending-")) return;
+    const localMessage = displayedMessages.find((message) => String(message._id) === messageId);
+    if (!localMessage || localMessage.status === "sending" || localMessage.type === "system") return;
+
     try {
-      await toggleReactionMutation({
+      const result = await toggleReactionMutation({
         messageId: messageId as any,
         participantId: participantId as any,
         emoji,
       });
-    } catch {
+
+      if ((result as any)?.ignored === true) {
+        removeMessageFromState(messageId);
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message.toLowerCase() : "";
+      if (message.includes("message not found") || message.includes("does not exist")) {
+        removeMessageFromState(messageId);
+        return;
+      }
       toast.error("Failed to react");
     }
-  }, [participantId, toggleReactionMutation]);
+  }, [displayedMessages, participantId, removeMessageFromState, toggleReactionMutation]);
 
   const handleLeaveRoom = async () => {
     try {

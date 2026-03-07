@@ -167,15 +167,18 @@ function MessageBubble({
   }, [message.storageId, message.isEncryptedFile, message.mimeType, encryptionKey]);
 
   const displayUrl = message.isEncryptedFile ? decryptedUrl : message.storageId;
+  const canInteract = message.status !== "sending";
 
   const handlers = useSwipeable({
     onSwiping: (eventData) => {
+      if (!canInteract) return;
       if (message.isMe) return; // Only swipe incoming messages for reply (WhatsApp style) - actually WhatsApp allows both, implementing generic swipe right
       if (eventData.dir === 'Right') {
         setSwipeOffset(Math.min(eventData.deltaX, 100));
       }
     },
     onSwipedRight: (eventData) => {
+      if (!canInteract) return;
       if (eventData.deltaX > 50) {
         onReply?.(message._id);
       }
@@ -188,6 +191,7 @@ function MessageBubble({
   });
 
   const handleTouchStart = () => {
+    if (!canInteract) return;
     const timer = setTimeout(() => {
       setShowReactionPicker(true);
     }, 500); // 500ms long press
@@ -310,6 +314,7 @@ function MessageBubble({
           onTouchStart={handleTouchStart}
           onTouchEnd={handleTouchEnd}
           onContextMenu={(e) => {
+            if (!canInteract) return;
             e.preventDefault();
             setShowReactionPicker(true);
           }}
@@ -461,8 +466,8 @@ function MessageBubble({
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align={message.isMe ? "end" : "start"}>
-              <DropdownMenuItem onClick={() => onReply?.(message._id)}>Reply</DropdownMenuItem>
-              <DropdownMenuItem onClick={() => setShowReactionPicker(true)}>React</DropdownMenuItem>
+              <DropdownMenuItem disabled={!canInteract} onClick={() => onReply?.(message._id)}>Reply</DropdownMenuItem>
+              <DropdownMenuItem disabled={!canInteract} onClick={() => setShowReactionPicker(true)}>React</DropdownMenuItem>
               <DropdownMenuItem onClick={() => navigator.clipboard.writeText(message.content)}>Copy</DropdownMenuItem>
               {message.isMe && (
                 <>

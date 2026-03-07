@@ -1,6 +1,8 @@
 export type CachedMessage = {
   _id: string;
   _creationTime: number;
+  expiresAt?: number;
+  selfDestructAt?: number;
 };
 
 export type ParticipantLike = {
@@ -10,20 +12,31 @@ export type ParticipantLike = {
 };
 
 export function mergeCachedMessages<T extends CachedMessage>(previous: T[], incoming?: T[]): T[] {
+  const now = Date.now();
+  const isVisible = (message: T) => {
+    if (typeof message.expiresAt === "number" && message.expiresAt <= now) return false;
+    if (typeof message.selfDestructAt === "number" && message.selfDestructAt <= now) return false;
+    return true;
+  };
+
+  const previousVisible = previous.filter(isVisible);
+
   if (!incoming) {
-    return previous;
+    return previousVisible;
   }
   // Resilience: transient empty payloads can happen during auth/socket refresh.
   // Don't wipe UI history on those momentary states.
   if (incoming.length === 0) {
-    return previous;
+    return previousVisible;
   }
 
   // Merge incoming with cache by id and keep chronological order.
   const byId = new Map<string, T>();
-  previous.forEach((message) => byId.set(String(message._id), message));
-  incoming.forEach((message) => byId.set(String(message._id), message));
-  return Array.from(byId.values()).sort((a, b) => a._creationTime - b._creationTime);
+  previousVisible.forEach((message) => byId.set(String(message._id), message));
+  incoming.filter(isVisible).forEach((message) => byId.set(String(message._id), message));
+  return Array.from(byId.values())
+    .sort((a, b) => a._creationTime - b._creationTime)
+    .slice(-600);
 }
 
 export function resolveRemoteCallName(

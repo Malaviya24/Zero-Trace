@@ -94,6 +94,7 @@ function GroupCallPageContent() {
   const peerSetupRef = useRef<Set<string>>(new Set());
   const cleanupTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const hasNavigatedRef = useRef(false);
+  const endingCallRef = useRef(false);
   const leaveTokenRef = useRef<string | null>(null);
   const shouldInitiateOffersRef = useRef(false);
 
@@ -173,6 +174,18 @@ function GroupCallPageContent() {
   sendSignalRef.current = sendSignalMutation;
   const markProcessedRef = useRef(markProcessedMutation);
   markProcessedRef.current = markProcessedMutation;
+
+  const markSignalProcessedSafe = useCallback(
+    async (signalId: Id<"signaling">, participantId: Id<"callParticipants">) => {
+      try {
+        await markProcessedRef.current({ signalId, participantId });
+        processedSignalsRef.current.add(signalId);
+      } catch {
+        // Allow retry on transient failures; backend now no-ops stale cases.
+      }
+    },
+    []
+  );
   const getReturnPath = useCallback(() => {
     const sessionRoomId = sessionStorage.getItem("call_room_id");
     const callRoomId = call?.roomId;
@@ -284,6 +297,7 @@ function GroupCallPageContent() {
 
   useEffect(() => {
     if (call?.status !== "ended" || hasNavigatedRef.current) return;
+    endingCallRef.current = true;
     const targetPath = getReturnPath();
     const timeoutId = window.setTimeout(() => {
       if (hasNavigatedRef.current) return;
@@ -295,12 +309,16 @@ function GroupCallPageContent() {
     return () => window.clearTimeout(timeoutId);
   }, [call?.status, getReturnPath, actions, navigate]);
 
-  const setupPeerConnection = useCallback((participantId: string) => {
+  const setupPeerConnection = useCallback((participantId: string): RTCPeerConnection | null => {
+    if (endingCallRef.current || call?.status === "ended") {
+      return null;
+    }
     console.log(`[Call] Setting up peer for: ${participantId}`);
 
     const pc = useGroupCallStore.getState().actions.createPeerConnection(participantId);
 
     pc.onicecandidate = async (event) => {
+      if (endingCallRef.current || call?.status === "ended") return;
       const myId = useGroupCallStore.getState().myParticipantId;
       if (event.candidate && myId) {
         try {
@@ -381,10 +399,12 @@ function GroupCallPageContent() {
       }
     };
 
-    useGroupCallStore.getState().actions.addTracksToPC(participantId);
+    if (useGroupCallStore.getState().localStream) {
+      useGroupCallStore.getState().actions.addTracksToPC(participantId);
+    }
 
     return pc;
-  }, [callId]);
+  }, [call?.status, callId]);
 
   const handleIceRestart = useCallback(async (pc: RTCPeerConnection, participantId: string) => {
     const myId = useGroupCallStore.getState().myParticipantId;
@@ -440,6 +460,10 @@ function GroupCallPageContent() {
         console.log(`[Call] New participant: ${participant.displayName} (${pid})`);
 
         const pc = setupPeerConnection(pid);
+        if (!pc) {
+          peerSetupRef.current.delete(pid);
+          return;
+        }
 
         const myJoinedAt = myParticipant.joinedAt || 0;
         const otherJoinedAt = participant.joinedAt || 0;
@@ -492,12 +516,24 @@ function GroupCallPageContent() {
   }, [participants, myParticipant, state.localStream, state.myParticipantId, validCallId, setupPeerConnection, actions]);
 
   useEffect(() => {
-    if (!signals || signals.length === 0 || !state.myParticipantId || isProcessingRef.current) {
+    if (
+      endingCallRef.current ||
+      hasNavigatedRef.current ||
+      call?.status === "ended" ||
+      !signals ||
+      signals.length === 0 ||
+      !state.myParticipantId ||
+      !state.localStream ||
+      isProcessingRef.current
+    ) {
       return;
     }
 
     const unprocessed = signals.filter((s: Doc<"signaling">) => !processedSignalsRef.current.has(s._id));
     if (unprocessed.length === 0) return;
+
+    const myParticipantId = state.myParticipantId;
+    if (!myParticipantId) return;
 
     isProcessingRef.current = true;
 
@@ -505,6 +541,10 @@ function GroupCallPageContent() {
       console.log(`[Call] Processing ${unprocessed.length} signal(s)`);
 
       for (const signal of unprocessed) {
+        if (endingCallRef.current || hasNavigatedRef.current || call?.status === "ended") {
+          await markSignalProcessedSafe(signal._id, myParticipantId);
+          continue;
+        }
         const fromPid = signal.fromParticipantId;
 
         console.log(`[Call] Signal: ${signal.type} from ${fromPid}`);
@@ -537,6 +577,7 @@ function GroupCallPageContent() {
 
             if (!iAmPolite && offerCollision) {
               console.log("[Call] Impolite peer ignoring colliding offer");
+              await markSignalProcessedSafe(signal._id, myParticipantId);
               continue;
             }
 
@@ -568,6 +609,7 @@ function GroupCallPageContent() {
 
             if (pc.signalingState !== "have-local-offer") {
               console.warn(`[Call] Skipping answer in state: ${pc.signalingState}`);
+              await markSignalProcessedSafe(signal._id, myParticipantId);
               continue;
             }
 
@@ -589,10 +631,10 @@ function GroupCallPageContent() {
             }
           }
 
-          await markProcessedRef.current({ signalId: signal._id, participantId: state.myParticipantId });
-          processedSignalsRef.current.add(signal._id);
+          await markSignalProcessedSafe(signal._id, myParticipantId);
         } catch (error) {
           console.error(`[Call] Failed to process ${signal.type}:`, error);
+          await markSignalProcessedSafe(signal._id, myParticipantId);
         }
       }
     };
@@ -600,9 +642,10 @@ function GroupCallPageContent() {
     processAll().finally(() => {
       isProcessingRef.current = false;
     });
-  }, [signals, state.myParticipantId, participants, validCallId, setupPeerConnection]);
+  }, [call?.status, signals, state.localStream, state.myParticipantId, participants, validCallId, setupPeerConnection, markSignalProcessedSafe]);
 
   const handleEndCall = async () => {
+    endingCallRef.current = true;
     if (validCallId) {
       try {
         await leaveCallMutation({

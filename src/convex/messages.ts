@@ -310,6 +310,7 @@ export const toggleReaction = mutation({
   handler: async (ctx, args) => {
     try {
       const user = await requireAuthenticatedUser(ctx);
+      const now = Date.now();
       const emoji = args.emoji.trim();
       if (!emoji || emoji.length > 8) {
         throw new Error("Unsupported reaction");
@@ -326,6 +327,10 @@ export const toggleReaction = mutation({
       if (!message) {
         // Message may have been deleted/expired after the UI rendered it.
         // Treat this as a no-op to avoid noisy server errors.
+        return { messageId: args.messageId, reactions: [], ignored: true as const };
+      }
+      if (message.expiresAt <= now || (message.selfDestructAt && message.selfDestructAt <= now)) {
+        // Message is logically expired but may not yet be cleaned up by background cleanup.
         return { messageId: args.messageId, reactions: [], ignored: true as const };
       }
       // Allow reactions on all message types now

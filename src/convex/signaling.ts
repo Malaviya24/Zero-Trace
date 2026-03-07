@@ -23,8 +23,9 @@ export const sendSignal = mutation({
     const user = await requireAuthenticatedUser(ctx);
     // Validate call exists
     const call = await ctx.db.get(args.callId);
-    if (!call) {
-      throw new Error("Call not found");
+    if (!call || call.status === "ended") {
+      // Late ICE/offer after call end should be a no-op.
+      return { ignored: true as const };
     }
 
     // Validate participants exist
@@ -32,15 +33,15 @@ export const sendSignal = mutation({
     const toParticipant = await ctx.db.get(args.toParticipantId);
     
     if (!fromParticipant || !toParticipant) {
-      throw new Error("Invalid participant");
+      return { ignored: true as const };
     }
     if (fromParticipant.leftAt || toParticipant.leftAt) {
-      throw new Error("Inactive participant");
+      return { ignored: true as const };
     }
 
     // Validate participants belong to this call
     if (fromParticipant.callId !== args.callId || toParticipant.callId !== args.callId) {
-      throw new Error("Participant not in call");
+      return { ignored: true as const };
     }
     if (fromParticipant.userId !== user._id) {
       throw new Error("Not allowed to send this signal");
@@ -55,6 +56,7 @@ export const sendSignal = mutation({
       processed: false,
       expiresAt: Date.now() + 60000, // Use constant from config
     });
+    return { ignored: false as const };
   },
 });
 
@@ -98,30 +100,41 @@ export const markProcessed = mutation({
     participantId: v.id("callParticipants"),
   },
   handler: async (ctx, args) => {
+    const user = await requireAuthenticatedUser(ctx);
     const signal = await ctx.db.get(args.signalId);
     if (!signal) {
-      return;
-    }
-    const user = await requireAuthenticatedUser(ctx);
-    const participant = await ctx.db.get(args.participantId);
-    if (!participant) {
-      throw new Error("Participant not found");
-    }
-    if (participant.callId !== signal.callId) {
-      throw new Error("Participant not in signal call");
-    }
-    if (participant.leftAt) {
-      throw new Error("Inactive participant cannot process signal");
-    }
-    if (signal.toParticipantId !== participant._id) {
-      throw new Error("Not allowed to process this signal");
-    }
-    if (participant.userId !== user._id) {
-      throw new Error("Not allowed to process this signal");
+      return { ignored: true as const };
     }
 
-    await ctx.db.patch(args.signalId, {
-      processed: true,
-    });
+    const call = await ctx.db.get(signal.callId);
+    if (!call || call.status === "ended") {
+      return { ignored: true as const };
+    }
+
+    const participant = await ctx.db.get(args.participantId);
+    if (!participant) {
+      return { ignored: true as const };
+    }
+    if (participant.callId !== signal.callId) {
+      return { ignored: true as const };
+    }
+    if (participant.leftAt) {
+      return { ignored: true as const };
+    }
+    if (signal.toParticipantId !== participant._id) {
+      return { ignored: true as const };
+    }
+    if (participant.userId !== user._id) {
+      return { ignored: true as const };
+    }
+
+    try {
+      await ctx.db.patch(args.signalId, {
+        processed: true,
+      });
+    } catch {
+      return { ignored: true as const };
+    }
+    return { ignored: false as const };
   },
 });
