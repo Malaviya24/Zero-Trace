@@ -1,24 +1,77 @@
 import { v } from "convex/values";
-import { mutation, query } from "./_generated/server";
-import { getCurrentUser } from "./users";
+import { internalMutation, mutation, query } from "./_generated/server";
+import { generateParticipantToken, requireRoomParticipantSession, sanitizeDisplayName, verifyRoomParticipantSession } from "./sessionAuth";
 
-async function requireAuthenticatedUser(ctx: unknown) {
-  const user = await getCurrentUser(ctx as never);
-  if (!user?._id) {
-    throw new Error("Unauthorized");
+async function cleanupExpiredData(ctx: { db: any }, now: number) {
+  const expiredRooms = await ctx.db
+    .query("rooms")
+    .withIndex("by_expires_at", (q: any) => q.lt("expiresAt", now))
+    .collect();
+
+  for (const room of expiredRooms) {
+    if (room.isActive) {
+      await ctx.db.patch(room._id, { isActive: false });
+    }
   }
-  return user;
+
+  const expiredMessages = await ctx.db
+    .query("messages")
+    .withIndex("by_expires_at", (q: any) => q.lt("expiresAt", now))
+    .collect();
+
+  const expiredParticipants = await ctx.db
+    .query("participants")
+    .withIndex("by_expires_at", (q: any) => q.lt("expiresAt", now))
+    .collect();
+
+  for (const participant of expiredParticipants) {
+    await ctx.db.delete(participant._id);
+  }
+
+  const selfDestructMessages = await ctx.db
+    .query("messages")
+    .withIndex("by_self_destruct", (q: any) => q.lt("selfDestructAt", now))
+    .collect();
+
+  const messageIdsToDelete = new Set<string>();
+  for (const message of expiredMessages) {
+    messageIdsToDelete.add(String(message._id));
+  }
+  for (const message of selfDestructMessages) {
+    messageIdsToDelete.add(String(message._id));
+  }
+
+  for (const messageId of messageIdsToDelete) {
+    const normalizedId = ctx.db.normalizeId("messages", messageId);
+    if (normalizedId) {
+      await ctx.db.delete(normalizedId);
+    }
+  }
+
+  const expiredAttempts = await ctx.db
+    .query("joinAttempts")
+    .withIndex("by_expires_at", (q: any) => q.lt("expiresAt", now))
+    .collect();
+
+  for (const attempt of expiredAttempts) {
+    await ctx.db.delete(attempt._id);
+  }
+
+  return {
+    expiredRooms: expiredRooms.length,
+    expiredMessages: expiredMessages.length,
+    expiredParticipants: expiredParticipants.length,
+    selfDestructMessages: selfDestructMessages.length,
+    expiredAttempts: expiredAttempts.length,
+  };
 }
 
-// Create a new chat room
 export const list = query({
   args: {},
   handler: async (ctx) => {
-    const user = await requireAuthenticatedUser(ctx);
     return await ctx.db
       .query("rooms")
-      .withIndex("by_creator", (q) => q.eq("creatorId", user._id))
-      .filter((q) => q.eq(q.field("isActive"), true))
+      .withIndex("by_active", (q) => q.eq("isActive", true))
       .order("desc")
       .take(20);
   },
@@ -28,146 +81,117 @@ export const createRoom = mutation({
   args: {
     roomId: v.string(),
     name: v.optional(v.string()),
-    passwordHash: v.optional(v.string()), // Kept as passwordHash in args for compatibility, mapped to passwordVerifier
+    passwordHash: v.optional(v.string()),
     passwordSalt: v.optional(v.string()),
     maxParticipants: v.optional(v.number()),
-    settings: v.optional(v.object({
-      selfDestruct: v.boolean(),
-      screenshotProtection: v.optional(v.boolean()),
-      keyRotationInterval: v.number(),
-    })),
+    settings: v.optional(
+      v.object({
+        selfDestruct: v.boolean(),
+        screenshotProtection: v.optional(v.boolean()),
+        keyRotationInterval: v.number(),
+      })
+    ),
   },
   handler: async (ctx, args) => {
-    try {
-      // Server-side validation
-      const providedRoomId = (args.roomId || "").toUpperCase();
-      if (!/^[A-Z0-9]{8}$/.test(providedRoomId)) {
-        throw new Error("Invalid room code format. Must be 8 characters: A-Z, 0-9.");
-      }
-
-      if (args.name && args.name.length > 50) {
-        throw new Error("Room name must be 50 characters or fewer.");
-      }
-
-      const maxParticipants = args.maxParticipants ?? 10;
-      if (maxParticipants < 2 || maxParticipants > 50) {
-        throw new Error("Max participants must be between 2 and 50.");
-      }
-
-      if (args.settings) {
-        if (args.settings.keyRotationInterval <= 0 || !Number.isFinite(args.settings.keyRotationInterval)) {
-          throw new Error("Key rotation interval must be a positive number.");
-        }
-      }
-
-      if (args.passwordHash) {
-        if (args.passwordHash.length < 20 || args.passwordHash.length > 100) {
-          throw new Error("Invalid password verifier format.");
-        }
-        if (!args.passwordSalt || args.passwordSalt.length < 10 || args.passwordSalt.length > 100) {
-          throw new Error("Invalid password salt format.");
-        }
-      }
-
-      const user = await requireAuthenticatedUser(ctx);
-      const now = Date.now();
-      const expiresAt = now + (2 * 60 * 60 * 1000); // 2 hours TTL
-
-      const generateCode = () => {
-        const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
-        let result = "";
-        if (typeof crypto !== "undefined" && crypto.getRandomValues) {
-          const bytes = new Uint8Array(8);
-          crypto.getRandomValues(bytes);
-          for (let i = 0; i < 8; i++) {
-            result += chars.charAt(bytes[i] % chars.length);
-          }
-        } else {
-          for (let i = 0; i < 8; i++) {
-            result += chars.charAt(Math.floor(Math.random() * chars.length));
-          }
-        }
-        return result;
-      };
-
-      let finalRoomId = providedRoomId;
-      for (let i = 0; i < 5; i++) {
-        const existing = await ctx.db
-          .query("rooms")
-          .withIndex("by_room_id", (q) => q.eq("roomId", finalRoomId))
-          .first();
-        if (!existing) break;
-        finalRoomId = generateCode();
-      }
-
-      try {
-        await ctx.db.insert("rooms", {
-          roomId: finalRoomId,
-          name: args.name,
-          passwordVerifier: args.passwordHash, // Map hash to verifier
-          passwordSalt: args.passwordSalt,
-          creatorId: user._id,
-          isActive: true,
-          maxParticipants,
-          expiresAt,
-          settings: {
-            selfDestruct: args.settings?.selfDestruct ?? false,
-            screenshotProtection: args.settings?.screenshotProtection ?? false,
-            keyRotationInterval: args.settings?.keyRotationInterval ?? 50,
-          },
-        });
-      } catch {
-        throw new Error("Failed to create room. Please try again.");
-      }
-
-      return { roomId: finalRoomId };
-    } catch (e) {
-      console.error("rooms.createRoom error:", e);
-      if (e instanceof Error) throw e;
-      throw new Error("Unexpected server error.");
+    const providedRoomId = (args.roomId || "").toUpperCase();
+    if (!/^[A-Z0-9]{8}$/.test(providedRoomId)) {
+      throw new Error("Invalid room code format. Must be 8 characters: A-Z, 0-9.");
     }
+
+    if (args.name && args.name.length > 50) {
+      throw new Error("Room name must be 50 characters or fewer.");
+    }
+
+    const maxParticipants = args.maxParticipants ?? 10;
+    if (maxParticipants < 2 || maxParticipants > 50) {
+      throw new Error("Max participants must be between 2 and 50.");
+    }
+
+    if (args.settings) {
+      if (args.settings.keyRotationInterval <= 0 || !Number.isFinite(args.settings.keyRotationInterval)) {
+        throw new Error("Key rotation interval must be a positive number.");
+      }
+    }
+
+    if (args.passwordHash) {
+      if (args.passwordHash.length < 20 || args.passwordHash.length > 100) {
+        throw new Error("Invalid password verifier format.");
+      }
+      if (!args.passwordSalt || args.passwordSalt.length < 10 || args.passwordSalt.length > 100) {
+        throw new Error("Invalid password salt format.");
+      }
+    }
+
+    const now = Date.now();
+    const expiresAt = now + 2 * 60 * 60 * 1000;
+
+    const generateCode = () => {
+      const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
+      let result = "";
+      for (let i = 0; i < 8; i += 1) {
+        result += chars.charAt(Math.floor(Math.random() * chars.length));
+      }
+      return result;
+    };
+
+    let finalRoomId = providedRoomId;
+    for (let i = 0; i < 5; i += 1) {
+      const existing = await ctx.db
+        .query("rooms")
+        .withIndex("by_room_id", (q) => q.eq("roomId", finalRoomId))
+        .first();
+      if (!existing) break;
+      finalRoomId = generateCode();
+    }
+
+    await ctx.db.insert("rooms", {
+      roomId: finalRoomId,
+      name: args.name,
+      passwordVerifier: args.passwordHash,
+      passwordSalt: args.passwordSalt,
+      creatorId: undefined,
+      isActive: true,
+      maxParticipants,
+      expiresAt,
+      settings: {
+        selfDestruct: args.settings?.selfDestruct ?? false,
+        screenshotProtection: args.settings?.screenshotProtection ?? false,
+        keyRotationInterval: args.settings?.keyRotationInterval ?? 50,
+      },
+    });
+
+    return { roomId: finalRoomId };
   },
 });
 
-// Get room by roomId - strips sensitive fields before returning to client
 export const getRoomByRoomId = query({
   args: { roomId: v.string() },
   handler: async (ctx, args) => {
-    try {
-      const room = await ctx.db
-        .query("rooms")
-        .withIndex("by_room_id", (q) => q.eq("roomId", args.roomId))
-        .filter((q) => q.eq(q.field("isActive"), true))
-        .first();
+    const room = await ctx.db
+      .query("rooms")
+      .withIndex("by_room_id", (q) => q.eq("roomId", args.roomId))
+      .filter((q) => q.eq(q.field("isActive"), true))
+      .first();
 
-      if (!room) return null;
+    if (!room) return null;
+    if (room.expiresAt < Date.now()) return null;
 
-      if (room.expiresAt < Date.now()) {
-        return null;
-      }
-
-      return {
-        _id: room._id,
-        _creationTime: room._creationTime,
-        roomId: room.roomId,
-        name: room.name,
-        isActive: room.isActive,
-        maxParticipants: room.maxParticipants,
-        expiresAt: room.expiresAt,
-        settings: room.settings,
-        creatorId: room.creatorId,
-        hasPassword: !!room.passwordVerifier,
-        passwordSalt: room.passwordSalt,
-      };
-    } catch (e) {
-      console.error("rooms.getRoomByRoomId error:", e);
-      if (e instanceof Error) throw e;
-      throw new Error("Unexpected server error.");
-    }
+    return {
+      _id: room._id,
+      _creationTime: room._creationTime,
+      roomId: room.roomId,
+      name: room.name,
+      isActive: room.isActive,
+      maxParticipants: room.maxParticipants,
+      expiresAt: room.expiresAt,
+      settings: room.settings,
+      creatorId: room.creatorId,
+      hasPassword: !!room.passwordVerifier,
+      passwordSalt: room.passwordSalt,
+    };
   },
 });
 
-// Join a room
 export const joinRoom = mutation({
   args: {
     roomId: v.string(),
@@ -176,500 +200,357 @@ export const joinRoom = mutation({
     passwordHash: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
-    try {
-      const sanitizedName = args.displayName.replace(/[<>&"'`]/g, '').trim();
-      if (!sanitizedName || sanitizedName.length > 30) {
-        throw new Error("Display name must be 1-30 characters.");
-      }
-      const sanitizedAvatar = args.avatar.trim();
-      if (!sanitizedAvatar || sanitizedAvatar.length > 10) {
-        throw new Error("Invalid avatar.");
-      }
+    const sanitizedName = sanitizeDisplayName(args.displayName);
+    if (!sanitizedName || sanitizedName.length > 30) {
+      throw new Error("Display name must be 1-30 characters.");
+    }
 
-      const user = await requireAuthenticatedUser(ctx);
-      const room = await ctx.db
-        .query("rooms")
-        .withIndex("by_room_id", (q) => q.eq("roomId", args.roomId))
-        .filter((q) => q.eq(q.field("isActive"), true))
-        .first();
+    const sanitizedAvatar = args.avatar.trim();
+    if (!sanitizedAvatar || sanitizedAvatar.length > 10) {
+      throw new Error("Invalid avatar.");
+    }
 
-      if (!room) {
-        throw new Error("Room not found or expired");
-      }
-      if (room.expiresAt < Date.now()) {
-        throw new Error("Room not found or expired");
-      }
+    const room = await ctx.db
+      .query("rooms")
+      .withIndex("by_room_id", (q) => q.eq("roomId", args.roomId))
+      .filter((q) => q.eq(q.field("isActive"), true))
+      .first();
 
-      const anyAdmin = await ctx.db
-        .query("participants")
-        .withIndex("by_room_id", (q) => q.eq("roomId", args.roomId))
-        .first()
-        .then(async (firstRow) => {
-          if (!firstRow) return false;
-          // Collect a small batch to check quickly
-          const batch = await ctx.db
-            .query("participants")
-            .withIndex("by_room_id", (q) => q.eq("roomId", args.roomId))
-            .collect();
-          return batch.some((p) => p.role === "admin");
-        });
+    if (!room || room.expiresAt < Date.now()) {
+      throw new Error("Room not found or expired");
+    }
 
-      // Decide role for this joiner:
-      // - admin if signed-in creator
-      // - else, if room has no creatorId and no admin exists yet, first joiner becomes admin
-      const roleForUser =
-        room!.creatorId && user._id === room!.creatorId
-          ? "admin"
-          : !room!.creatorId && !anyAdmin
-          ? "admin"
-          : "member";
+    const now = Date.now();
+    const windowMs = 10 * 60 * 1000;
+    const threshold = 5;
 
-      const now = Date.now();
-      const windowMs = 10 * 60 * 1000;
-      const threshold = 5;
-
-      if (room.passwordVerifier) {
-        if (!args.passwordHash) {
-          await ctx.db.insert("joinAttempts", {
-            roomId: args.roomId,
-            failed: true,
-            createdAt: now,
-            expiresAt: now + windowMs,
-          });
-          throw new Error("Password required to join this room");
-        }
-
-        const recentFailed = await ctx.db
-          .query("joinAttempts")
-          .withIndex("by_room_and_failed_and_created_at", (q) =>
-            q.eq("roomId", args.roomId).eq("failed", true).gt("createdAt", now - windowMs)
-          )
-          .collect();
-
-        if (recentFailed.length >= threshold) {
-          throw new Error("Too many incorrect password attempts. Try again later.");
-        }
-
-        if (args.passwordHash !== room.passwordVerifier) {
-          await ctx.db.insert("joinAttempts", {
-            roomId: args.roomId,
-            failed: true,
-            createdAt: now,
-            expiresAt: now + windowMs,
-          });
-          throw new Error("Incorrect password");
-        }
-
+    if (room.passwordVerifier) {
+      if (!args.passwordHash) {
         await ctx.db.insert("joinAttempts", {
           roomId: args.roomId,
-          failed: false,
+          failed: true,
           createdAt: now,
           expiresAt: now + windowMs,
         });
+        throw new Error("Password required to join this room");
       }
 
-      const currentParticipants = await ctx.db
-        .query("participants")
-        .withIndex("by_room_id", (q) => q.eq("roomId", args.roomId))
-        .filter((q) => q.eq(q.field("isActive"), true))
+      const recentFailed = await ctx.db
+        .query("joinAttempts")
+        .withIndex("by_room_and_failed_and_created_at", (q) =>
+          q.eq("roomId", args.roomId).eq("failed", true).gt("createdAt", now - windowMs)
+        )
         .collect();
 
-      if (currentParticipants.length >= (room.maxParticipants || 10)) {
-        throw new Error("Room is full");
+      if (recentFailed.length >= threshold) {
+        throw new Error("Too many incorrect password attempts. Try again later.");
       }
 
-      const existingParticipant = await ctx.db
-        .query("participants")
-        .withIndex("by_room_and_user", (q) =>
-          q.eq("roomId", args.roomId).eq("userId", user._id)
-        )
-        .filter((q) => q.eq(q.field("isActive"), true))
-        .first();
-
-      if (existingParticipant) {
-        await ctx.db.patch(existingParticipant._id, {
-          displayName: sanitizedName,
-          avatar: sanitizedAvatar,
-          lastSeen: Date.now(),
-          role: roleForUser,
-        });
-        return existingParticipant._id;
-      }
-
-      const joinedAt = Date.now();
-      const expiresAt = joinedAt + 2 * 60 * 60 * 1000;
-
-      const participantId = await ctx.db.insert("participants", {
-        roomId: args.roomId,
-        userId: user._id,
-        displayName: sanitizedName,
-        avatar: sanitizedAvatar,
-        isActive: true,
-        lastSeen: joinedAt,
-        joinedAt,
-        expiresAt,
-        role: roleForUser,
-        isTyping: false,
-        typingUpdatedAt: joinedAt,
-      });
-
-      await ctx.db.insert("messages", {
-        roomId: args.roomId,
-        senderName: "System",
-        senderAvatar: "🤖",
-        content: `${sanitizedName} joined the room`,
-        messageType: "join",
-        isRead: false,
-        expiresAt,
-        encryptionKeyId: "system",
-      });
-
-      return participantId;
-    } catch (e) {
-      console.error("rooms.joinRoom error:", e);
-      if (e instanceof Error) throw e;
-      throw new Error("Unexpected server error.");
-    }
-  },
-});
-
-// Leave a room
-export const leaveRoom = mutation({
-  args: { roomId: v.string(), participantId: v.optional(v.id("participants")) },
-  handler: async (ctx, args) => {
-    try {
-      const user = await requireAuthenticatedUser(ctx);
-
-      const participant = await ctx.db
-        .query("participants")
-        .withIndex("by_room_and_user", (q) =>
-          q.eq("roomId", args.roomId).eq("userId", user._id)
-        )
-        .filter((q) => q.eq(q.field("isActive"), true))
-        .first();
-
-      if (participant) {
-        await ctx.db.patch(participant._id, { isActive: false, isTyping: false });
-
-        const now = Date.now();
-        const expiresAt = now + 2 * 60 * 60 * 1000;
-
-        await ctx.db.insert("messages", {
+      if (args.passwordHash !== room.passwordVerifier) {
+        await ctx.db.insert("joinAttempts", {
           roomId: args.roomId,
-          senderName: "System",
-          senderAvatar: "🤖",
-          content: `${participant.displayName} left the room`,
-          messageType: "leave",
-          isRead: false,
-          expiresAt,
-          encryptionKeyId: "system",
+          failed: true,
+          createdAt: now,
+          expiresAt: now + windowMs,
         });
-      }
-    } catch (e) {
-      console.error("rooms.leaveRoom error:", e);
-      if (e instanceof Error) throw e;
-      throw new Error("Unexpected server error.");
-    }
-  },
-});
-
-// Get room participants
-export const getRoomParticipants = query({
-  args: { roomId: v.string() },
-  handler: async (ctx, args) => {
-    try {
-      const user = await requireAuthenticatedUser(ctx);
-      const me = await ctx.db
-        .query("participants")
-        .withIndex("by_room_and_user", (q) =>
-          q.eq("roomId", args.roomId).eq("userId", user._id)
-        )
-        .filter((q) => q.eq(q.field("isActive"), true))
-        .first();
-      if (!me) return [];
-
-      return await ctx.db
-        .query("participants")
-        .withIndex("by_room_id", (q) => q.eq("roomId", args.roomId))
-        .filter((q) => q.eq(q.field("isActive"), true))
-        .collect();
-    } catch (e) {
-      console.error("rooms.getRoomParticipants error:", e);
-      if (e instanceof Error) throw e;
-      throw new Error("Unexpected server error.");
-    }
-  },
-});
-
-// Update participant activity
-export const updateActivity = mutation({
-  args: { roomId: v.string() },
-  handler: async (ctx, args) => {
-    try {
-      const user = await requireAuthenticatedUser(ctx);
-
-      const participant = await ctx.db
-        .query("participants")
-        .withIndex("by_room_and_user", (q) => 
-          q.eq("roomId", args.roomId).eq("userId", user._id)
-        )
-        .filter((q) => q.eq(q.field("isActive"), true))
-        .first();
-
-      if (participant) {
-        await ctx.db.patch(participant._id, { lastSeen: Date.now() });
-      }
-    } catch (e) {
-      console.error("rooms.updateActivity error:", e);
-      if (e instanceof Error) throw e;
-      throw new Error("Unexpected server error.");
-    }
-  },
-});
-
-// Set typing status (debounced from client)
-export const setTyping = mutation({
-  args: { roomId: v.string(), isTyping: v.boolean() },
-  handler: async (ctx, args) => {
-    try {
-      const user = await requireAuthenticatedUser(ctx);
-
-      const participant = await ctx.db
-        .query("participants")
-        .withIndex("by_room_and_user", (q) => q.eq("roomId", args.roomId).eq("userId", user._id))
-        .filter((q) => q.eq(q.field("isActive"), true))
-        .first();
-      if (!participant) return;
-      await ctx.db.patch(participant._id, {
-        isTyping: args.isTyping,
-        typingUpdatedAt: Date.now(),
-      });
-    } catch (e) {
-      console.error("rooms.setTyping error:", e);
-      if (e instanceof Error) throw e;
-      throw new Error("Unexpected server error.");
-    }
-  },
-});
-
-// Add: Kick a specific participant (admin only). Verify admin via callerParticipantId.
-export const kickParticipant = mutation({
-  args: { roomId: v.string(), participantId: v.id("participants"), callerParticipantId: v.id("participants") },
-  handler: async (ctx, args) => {
-    try {
-      const user = await requireAuthenticatedUser(ctx);
-      const room = await ctx.db
-        .query("rooms")
-        .withIndex("by_room_id", (q) => q.eq("roomId", args.roomId))
-        .first();
-      if (!room) throw new Error("Room not found");
-
-      const caller = await ctx.db.get(args.callerParticipantId);
-      if (
-        !caller ||
-        caller.roomId !== args.roomId ||
-        caller.isActive !== true ||
-        caller.role !== "admin" ||
-        caller.userId !== user._id
-      ) {
-        throw new Error("Only the admin can perform this action");
+        throw new Error("Incorrect password");
       }
 
-      const target = await ctx.db.get(args.participantId);
-      if (!target || target.roomId !== args.roomId || !target.isActive) return;
-
-      if (target.role === "admin") {
-        throw new Error("Cannot kick the admin");
-      }
-
-      await ctx.db.patch(args.participantId, { isActive: false, isTyping: false });
-
-      const now = Date.now();
-      const expiresAt = now + 2 * 60 * 60 * 1000;
-      await ctx.db.insert("messages", {
+      await ctx.db.insert("joinAttempts", {
         roomId: args.roomId,
-        senderName: "System",
-        senderAvatar: "🤖",
-        content: `${target.displayName} was removed by admin`,
-        messageType: "system",
-        isRead: false,
-        expiresAt,
-        encryptionKeyId: "system",
+        failed: false,
+        createdAt: now,
+        expiresAt: now + windowMs,
       });
-    } catch (e) {
-      console.error("rooms.kickParticipant error:", e);
-      if (e instanceof Error) throw e;
-      throw new Error("Unexpected server error.");
     }
+
+    const activeParticipants = await ctx.db
+      .query("participants")
+      .withIndex("by_room_id", (q) => q.eq("roomId", args.roomId))
+      .filter((q) => q.eq(q.field("isActive"), true))
+      .collect();
+
+    if (activeParticipants.length >= (room.maxParticipants || 10)) {
+      throw new Error("Room is full");
+    }
+
+    const anyAdmin = activeParticipants.some((participant) => participant.role === "admin");
+    const roleForUser = anyAdmin ? "member" : "admin";
+    const participantToken = generateParticipantToken();
+    const expiresAt = now + 2 * 60 * 60 * 1000;
+
+    const participantId = await ctx.db.insert("participants", {
+      roomId: args.roomId,
+      userId: undefined,
+      participantToken,
+      displayName: sanitizedName,
+      avatar: sanitizedAvatar,
+      isActive: true,
+      lastSeen: now,
+      joinedAt: now,
+      expiresAt,
+      role: roleForUser,
+      isTyping: false,
+      typingUpdatedAt: now,
+    });
+
+    await ctx.db.insert("messages", {
+      roomId: args.roomId,
+      senderName: "System",
+      senderAvatar: "bot",
+      content: `${sanitizedName} joined the room`,
+      messageType: "join",
+      isRead: false,
+      expiresAt,
+      encryptionKeyId: "system",
+    });
+
+    return { participantId, participantToken };
   },
 });
 
-// Add: Clear all members (admin only, keep admin). Verify admin via callerParticipantId.
+export const leaveRoom = mutation({
+  args: {
+    roomId: v.string(),
+    participantId: v.id("participants"),
+    participantToken: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const participant = await requireRoomParticipantSession(ctx, {
+      roomId: args.roomId,
+      participantId: args.participantId,
+      participantToken: args.participantToken,
+      requireActive: false,
+    });
+
+    if (!participant.isActive) {
+      return;
+    }
+
+    await ctx.db.patch(participant._id, { isActive: false, isTyping: false });
+
+    const now = Date.now();
+    const expiresAt = now + 2 * 60 * 60 * 1000;
+    await ctx.db.insert("messages", {
+      roomId: args.roomId,
+      senderName: "System",
+      senderAvatar: "bot",
+      content: `${participant.displayName} left the room`,
+      messageType: "leave",
+      isRead: false,
+      expiresAt,
+      encryptionKeyId: "system",
+    });
+  },
+});
+
+export const getRoomParticipants = query({
+  args: {
+    roomId: v.string(),
+    participantId: v.id("participants"),
+    participantToken: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const me = await verifyRoomParticipantSession(ctx, {
+      roomId: args.roomId,
+      participantId: args.participantId,
+      participantToken: args.participantToken,
+    });
+
+    if (!me) return [];
+
+    return await ctx.db
+      .query("participants")
+      .withIndex("by_room_id", (q) => q.eq("roomId", args.roomId))
+      .filter((q) => q.eq(q.field("isActive"), true))
+      .collect();
+  },
+});
+
+export const updateActivity = mutation({
+  args: {
+    roomId: v.string(),
+    participantId: v.id("participants"),
+    participantToken: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const participant = await requireRoomParticipantSession(ctx, {
+      roomId: args.roomId,
+      participantId: args.participantId,
+      participantToken: args.participantToken,
+    });
+
+    await ctx.db.patch(participant._id, { lastSeen: Date.now() });
+  },
+});
+
+export const setTyping = mutation({
+  args: {
+    roomId: v.string(),
+    participantId: v.id("participants"),
+    participantToken: v.string(),
+    isTyping: v.boolean(),
+  },
+  handler: async (ctx, args) => {
+    const participant = await requireRoomParticipantSession(ctx, {
+      roomId: args.roomId,
+      participantId: args.participantId,
+      participantToken: args.participantToken,
+    });
+
+    await ctx.db.patch(participant._id, {
+      isTyping: args.isTyping,
+      typingUpdatedAt: Date.now(),
+    });
+  },
+});
+
+export const kickParticipant = mutation({
+  args: {
+    roomId: v.string(),
+    participantId: v.id("participants"),
+    callerParticipantId: v.id("participants"),
+    callerParticipantToken: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const caller = await requireRoomParticipantSession(ctx, {
+      roomId: args.roomId,
+      participantId: args.callerParticipantId,
+      participantToken: args.callerParticipantToken,
+    });
+
+    if (caller.role !== "admin") {
+      throw new Error("Only the admin can perform this action");
+    }
+
+    const target = await ctx.db.get(args.participantId);
+    if (!target || target.roomId !== args.roomId || !target.isActive) return;
+    if (target.role === "admin") {
+      throw new Error("Cannot kick the admin");
+    }
+
+    await ctx.db.patch(args.participantId, { isActive: false, isTyping: false });
+
+    const now = Date.now();
+    const expiresAt = now + 2 * 60 * 60 * 1000;
+    await ctx.db.insert("messages", {
+      roomId: args.roomId,
+      senderName: "System",
+      senderAvatar: "bot",
+      content: `${target.displayName} was removed by admin`,
+      messageType: "system",
+      isRead: false,
+      expiresAt,
+      encryptionKeyId: "system",
+    });
+  },
+});
+
 export const clearParticipants = mutation({
   args: {
     roomId: v.string(),
     callerParticipantId: v.id("participants"),
+    callerParticipantToken: v.string(),
     panic: v.optional(v.boolean()),
   },
   handler: async (ctx, args) => {
-    try {
-      const room = await ctx.db
-        .query("rooms")
-        .withIndex("by_room_id", (q) => q.eq("roomId", args.roomId))
-        .first();
+    const caller = await requireRoomParticipantSession(ctx, {
+      roomId: args.roomId,
+      participantId: args.callerParticipantId,
+      participantToken: args.callerParticipantToken,
+    });
 
-      if (!room) return; // Room already gone
-
-      const user = await requireAuthenticatedUser(ctx);
-      const caller = await ctx.db.get(args.callerParticipantId);
-      
-      // Permit if:
-      // - signed-in creator, or
-      // - caller participant exists in room and has role "admin"
-      let isAdmin = false;
-      if (user?._id && room.creatorId && user._id === room.creatorId) {
-        isAdmin = true;
-      } else if (
-        caller &&
-        caller.roomId === args.roomId &&
-        caller.role === "admin" &&
-        caller.isActive &&
-        caller.userId === user._id
-      ) {
-        isAdmin = true;
-      }
-
-      if (!isAdmin) {
-        throw new Error("Only the admin can perform this action");
-      }
-
-      const allParticipants = await ctx.db
-        .query("participants")
-        .withIndex("by_room_id", (q) => q.eq("roomId", args.roomId))
-        .collect();
-
-      if (!args.panic) {
-        for (const p of allParticipants) {
-          if (p.isActive && p.role !== "admin") {
-            await ctx.db.patch(p._id, { isActive: false, isTyping: false });
-          }
-        }
-        return { success: true, destroyed: false };
-      }
-
-      // PANIC MODE: Destructive wipe
-      const now = Date.now();
-      await ctx.db.patch(room._id, { isActive: false, expiresAt: now });
-
-      const roomMessages = await ctx.db
-        .query("messages")
-        .withIndex("by_room_id", (q) => q.eq("roomId", args.roomId))
-        .collect();
-      for (const m of roomMessages) await ctx.db.delete(m._id);
-
-      for (const p of allParticipants) {
-        await ctx.db.delete(p._id);
-      }
-
-      const roomKeys = await ctx.db
-        .query("encryptionKeys")
-        .withIndex("by_room_id", (q) => q.eq("roomId", args.roomId))
-        .collect();
-      for (const k of roomKeys) await ctx.db.delete(k._id);
-
-      const attempts = await ctx.db
-        .query("joinAttempts")
-        .withIndex("by_room_and_failed_and_created_at", (q) =>
-          q.eq("roomId", args.roomId).eq("failed", true)
-        )
-        .collect();
-      for (const a of attempts) await ctx.db.delete(a._id);
-
-      const roomCalls = await ctx.db
-        .query("calls")
-        .withIndex("by_room_id", (q) => q.eq("roomId", args.roomId))
-        .collect();
-      
-      for (const call of roomCalls) {
-        const callParticipants = await ctx.db
-          .query("callParticipants")
-          .withIndex("by_call_id", (q) => q.eq("callId", call._id))
-          .collect();
-        for (const cp of callParticipants) await ctx.db.delete(cp._id);
-
-        const signals = await ctx.db
-          .query("signaling")
-          .withIndex("by_call_id", (q) => q.eq("callId", call._id))
-          .collect();
-        for (const s of signals) await ctx.db.delete(s._id);
-
-        await ctx.db.delete(call._id);
-      }
-
-      return { success: true, destroyed: true };
-    } catch (e) {
-      console.error("rooms.clearParticipants error:", e);
-      if (e instanceof Error) throw e;
-      throw new Error("Unexpected server error.");
+    if (caller.role !== "admin") {
+      throw new Error("Only the admin can perform this action");
     }
-  },
-});
 
-// Cleanup expired rooms and data
-export const cleanupExpired = mutation({
-  args: {},
-  handler: async (ctx) => {
-    try {
-      const now = Date.now();
+    const room = await ctx.db
+      .query("rooms")
+      .withIndex("by_room_id", (q) => q.eq("roomId", args.roomId))
+      .first();
 
-      const expiredRooms = await ctx.db
-        .query("rooms")
-        .withIndex("by_expires_at", (q) => q.lt("expiresAt", now))
-        .collect();
+    if (!room) return { success: true, destroyed: false };
 
-      for (const room of expiredRooms) {
-        await ctx.db.patch(room._id, { isActive: false });
+    const allParticipants = await ctx.db
+      .query("participants")
+      .withIndex("by_room_id", (q) => q.eq("roomId", args.roomId))
+      .collect();
+
+    if (!args.panic) {
+      for (const participant of allParticipants) {
+        if (participant.isActive && participant.role !== "admin") {
+          await ctx.db.patch(participant._id, { isActive: false, isTyping: false });
+        }
       }
+      return { success: true, destroyed: false };
+    }
 
-      const expiredMessages = await ctx.db
-        .query("messages")
-        .withIndex("by_expires_at", (q) => q.lt("expiresAt", now))
+    const now = Date.now();
+    await ctx.db.patch(room._id, { isActive: false, expiresAt: now });
+
+    const roomMessages = await ctx.db
+      .query("messages")
+      .withIndex("by_room_id", (q) => q.eq("roomId", args.roomId))
+      .collect();
+    for (const message of roomMessages) {
+      await ctx.db.delete(message._id);
+    }
+
+    for (const participant of allParticipants) {
+      await ctx.db.delete(participant._id);
+    }
+
+    const roomKeys = await ctx.db
+      .query("encryptionKeys")
+      .withIndex("by_room_id", (q) => q.eq("roomId", args.roomId))
+      .collect();
+    for (const key of roomKeys) {
+      await ctx.db.delete(key._id);
+    }
+
+    const attempts = await ctx.db
+      .query("joinAttempts")
+      .withIndex("by_room_and_failed_and_created_at", (q) => q.eq("roomId", args.roomId).eq("failed", true))
+      .collect();
+    for (const attempt of attempts) {
+      await ctx.db.delete(attempt._id);
+    }
+
+    const roomCalls = await ctx.db
+      .query("calls")
+      .withIndex("by_room_id", (q) => q.eq("roomId", args.roomId))
+      .collect();
+
+    for (const call of roomCalls) {
+      const callParticipants = await ctx.db
+        .query("callParticipants")
+        .withIndex("by_call_id", (q) => q.eq("callId", call._id))
         .collect();
-
-      for (const message of expiredMessages) {
-        await ctx.db.delete(message._id);
-      }
-
-      const expiredParticipants = await ctx.db
-        .query("participants")
-        .withIndex("by_expires_at", (q) => q.lt("expiresAt", now))
-        .collect();
-
-      for (const participant of expiredParticipants) {
+      for (const participant of callParticipants) {
         await ctx.db.delete(participant._id);
       }
 
-      const selfDestructMessages = await ctx.db
-        .query("messages")
-        .withIndex("by_self_destruct", (q) => q.lt("selfDestructAt", now))
+      const signals = await ctx.db
+        .query("signaling")
+        .withIndex("by_call_id", (q) => q.eq("callId", call._id))
         .collect();
-
-      for (const message of selfDestructMessages) {
-        await ctx.db.delete(message._id);
+      for (const signal of signals) {
+        await ctx.db.delete(signal._id);
       }
 
-      const expiredAttempts = await ctx.db
-        .query("joinAttempts")
-        .withIndex("by_expires_at", (q) => q.lt("expiresAt", now))
-        .collect();
-
-      for (const attempt of expiredAttempts) {
-        await ctx.db.delete(attempt._id);
-      }
-    } catch (e) {
-      console.error("rooms.cleanupExpired error:", e);
-      if (e instanceof Error) throw e;
-      throw new Error("Unexpected server error.");
+      await ctx.db.delete(call._id);
     }
+
+    return { success: true, destroyed: true };
   },
+});
+
+export const cleanupExpiredInternal = internalMutation({
+  args: {},
+  handler: async (ctx) => cleanupExpiredData(ctx, Date.now()),
+});
+
+export const cleanupExpired = mutation({
+  args: {},
+  handler: async (ctx) => cleanupExpiredData(ctx, Date.now()),
 });

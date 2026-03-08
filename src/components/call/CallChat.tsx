@@ -31,10 +31,29 @@ export function CallChat({ roomId, displayName, className }: CallChatProps) {
         }
       })()
     : null;
+  const participantToken = resolvedRoomId
+    ? (() => {
+        try {
+          const raw = localStorage.getItem(`room_session_${resolvedRoomId}`);
+          if (!raw) return null;
+          const parsed = JSON.parse(raw);
+          return typeof parsed?.participantToken === "string" ? parsed.participantToken : null;
+        } catch {
+          return null;
+        }
+      })()
+    : null;
   
   const messages = useQuery(
     (api as any).messages.getRoomMessages,
-    resolvedRoomId ? { roomId: resolvedRoomId, limit: 500 } : "skip"
+    resolvedRoomId && participantId && participantToken
+      ? {
+          roomId: resolvedRoomId,
+          participantId: participantId as Id<"participants">,
+          participantToken,
+          limit: 500,
+        }
+      : "skip"
   );
   
   const sendMessageMutation = useMutation((api as any).messages.sendMessage);
@@ -47,7 +66,7 @@ export function CallChat({ roomId, displayName, className }: CallChatProps) {
   }, [messages]);
 
   const handleSend = async () => {
-    if (!message.trim() || !resolvedRoomId || !participantId) return;
+    if (!message.trim() || !resolvedRoomId || !participantId || !participantToken) return;
 
     try {
       await sendMessageMutation({
@@ -55,6 +74,7 @@ export function CallChat({ roomId, displayName, className }: CallChatProps) {
         content: message.trim(),
         encryptionKeyId: "call-chat",
         participantId: participantId as Id<"participants">,
+        participantToken,
       });
       setMessage("");
     } catch (error) {
@@ -137,7 +157,7 @@ export function CallChat({ roomId, displayName, className }: CallChatProps) {
           />
           <Button
             onClick={handleSend}
-            disabled={!message.trim() || !resolvedRoomId || !participantId}
+            disabled={!message.trim() || !resolvedRoomId || !participantId || !participantToken}
             size="icon"
           >
             <Send className="h-4 w-4" />

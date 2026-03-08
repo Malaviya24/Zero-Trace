@@ -32,60 +32,76 @@ export function WhatsAppCallControls({
   onEndCall
 }: CallControlsProps) {
   return (
-    <div className="w-full bg-[#1f2c34] rounded-t-[2rem] pb-8 pt-4 px-6 flex flex-col items-center shadow-[0_-4px_20px_rgba(0,0,0,0.3)]">
-      {/* Handle bar for bottom sheet feel */}
-      <div className="w-10 h-1 bg-gray-600 rounded-full mb-6 opacity-50" />
-      
-      <div className="flex items-center justify-between w-full max-w-sm px-2">
+    <div className="w-full px-4 pb-6 sm:px-6">
+      <div className="mx-auto w-full max-w-xl rounded-[28px] border border-white/10 bg-black/55 px-4 py-4 shadow-[0_20px_50px_rgba(0,0,0,0.45)] backdrop-blur-xl">
+        <div className="mb-3 flex justify-center">
+          <div className="h-1.5 w-12 rounded-full bg-white/25" />
+        </div>
+
+        <div className="flex items-center justify-center gap-3">
         <ControlBtn 
           icon={isSpeakerEnabled ? <Volume2 className="h-6 w-6" /> : <VolumeX className="h-6 w-6" />} 
           isActive={isSpeakerEnabled}
           onClick={onToggleSpeaker}
+            label="Speaker"
         />
         
         <ControlBtn 
           icon={isVideoEnabled ? <Video className="h-6 w-6" /> : <VideoOff className="h-6 w-6" />} 
-          isActive={!isVideoEnabled} // Active state usually means "On" but here we might want "Off" to look distinct? WhatsApp logic: White is on, Crossed is off.
+          isActive={isVideoEnabled}
           onClick={onToggleVideo}
+            label="Video"
         />
         
         <ControlBtn 
           icon={isAudioEnabled ? <Mic className="h-6 w-6" /> : <MicOff className="h-6 w-6" />} 
-          isActive={!isAudioEnabled} 
+          isActive={isAudioEnabled} 
           onClick={onToggleAudio}
+            label="Mic"
         />
         
-        <div className="bg-red-500 rounded-full p-4 cursor-pointer hover:bg-red-600 transition-colors shadow-lg" onClick={onEndCall}>
-          <PhoneOff className="h-7 w-7 text-white fill-white" />
+          <button
+            onClick={onEndCall}
+            className="flex h-16 w-16 items-center justify-center rounded-full bg-red-500 text-white shadow-[0_10px_24px_rgba(239,68,68,0.45)] transition-colors hover:bg-red-400"
+            aria-label="End call"
+          >
+            <PhoneOff className="h-7 w-7" />
+          </button>
         </div>
-      </div>
 
-      {/* Secondary Actions (Swipe up or Tap) */}
-      <div className="mt-6 flex gap-8">
-         <button className="flex flex-col items-center gap-2 text-gray-400 hover:text-white transition-colors">
-            <div className="p-3 rounded-full bg-gray-800">
-              <Users className="h-5 w-5" />
-            </div>
-            <span className="text-xs">Add</span>
-         </button>
-         <button className="flex flex-col items-center gap-2 text-gray-400 hover:text-white transition-colors">
-            <div className="p-3 rounded-full bg-gray-800">
-              <MoreVertical className="h-5 w-5" />
-            </div>
-            <span className="text-xs">More</span>
-         </button>
+        <div className="mt-4 flex items-center justify-center gap-4 text-white/80">
+          <button className="inline-flex items-center gap-2 rounded-full px-3 py-1.5 text-xs hover:bg-white/10">
+            <Users className="h-4 w-4" />
+            Participants
+          </button>
+          <button className="inline-flex items-center gap-2 rounded-full px-3 py-1.5 text-xs hover:bg-white/10">
+            <MoreVertical className="h-4 w-4" />
+            More
+          </button>
+        </div>
       </div>
     </div>
   );
 }
 
-function ControlBtn({ icon, isActive, onClick }: { icon: React.ReactNode, isActive?: boolean, onClick: () => void }) {
+function ControlBtn({
+  icon,
+  isActive,
+  onClick,
+  label,
+}: {
+  icon: React.ReactNode;
+  isActive?: boolean;
+  onClick: () => void;
+  label: string;
+}) {
   return (
     <button 
       onClick={onClick}
+      aria-label={label}
       className={cn(
-        "p-3 rounded-full transition-all duration-200",
-        isActive ? "bg-white/10 text-white" : "text-white/70 hover:bg-white/5"
+        "flex h-12 w-12 items-center justify-center rounded-full transition-all duration-200",
+        isActive ? "bg-white/25 text-white hover:bg-white/35" : "bg-white/10 text-white/70 hover:bg-white/20"
       )}
     >
       {icon}

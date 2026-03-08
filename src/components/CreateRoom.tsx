@@ -23,7 +23,6 @@ import { toast } from "sonner";
 import { useNavigate, useLocation } from "react-router";
 import QRCode from "qrcode";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import { useAuthActions } from "@convex-dev/auth/react";
 
 export default function CreateRoom() {
   const navigate = useNavigate();
@@ -57,10 +56,6 @@ export default function CreateRoom() {
   }, [createdRoom]);
 
   const createRoomMutation = useMutation((api as any).rooms.createRoom);
-  const { signIn } = useAuthActions();
-
-  const isAuthFailure = (message: string) =>
-    /unauthorized|failed to authenticate|auth provider discovery|unauthenticated/i.test(message);
 
   const validateRoomName = (value: string): string | null => {
     if (value.length > 50) return "Room name must be 50 characters or fewer.";
@@ -149,22 +144,6 @@ export default function CreateRoom() {
     } catch (error) {
       console.error("Create room error:", error);
       const message = error instanceof Error ? error.message : "Failed to create room";
-
-      if (isAuthFailure(message)) {
-        try {
-          await signIn("anonymous");
-          await createRoomOnce();
-          toast.success("Room created successfully!");
-          return;
-        } catch (retryError) {
-          const retryMessage =
-            retryError instanceof Error ? retryError.message : "Failed after re-authentication";
-          setApiError(retryMessage);
-          toast.error(retryMessage);
-          return;
-        }
-      }
-
       setApiError(message);
       toast.error(message);
     } finally {
@@ -235,6 +214,7 @@ export default function CreateRoom() {
               <Label htmlFor="roomName">Room Name (Optional)</Label>
               <Input
                 id="roomName"
+                autoComplete="username"
                 value={roomName}
                 onChange={(e) => {
                   setRoomName(e.target.value);
@@ -255,6 +235,7 @@ export default function CreateRoom() {
               <Input
                 id="password"
                 type="password"
+                autoComplete="new-password"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 placeholder="Enter room password"

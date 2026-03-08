@@ -14,7 +14,8 @@
     "convex:push:dev": "convex dev --once --env-file .env.convex.dev",
     "convex:deploy:prod": "convex deploy -y --env-file .env.convex.prod",
     "convex:env:dev": "convex env list --env-file .env.convex.dev",
-    "convex:env:prod": "convex env list --env-file .env.convex.prod"
+    "convex:env:prod": "convex env list --env-file .env.convex.prod",
+    "doctor:convex": "node scripts/convex-deployment-doctor.mjs"
   },
   "dependencies": {
     "@convex-dev/auth": "^0.0.86",

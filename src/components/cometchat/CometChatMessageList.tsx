@@ -1,7 +1,7 @@
 import React, { useRef, useEffect, useState } from 'react';
 import { format } from 'date-fns';
 import { cn } from "@/lib/utils";
-import { CheckCheck, Clock3, SmilePlus, Reply, FileIcon, Download, Play } from 'lucide-react';
+import { CheckCheck, Clock3, Reply, FileIcon, Download, Play } from 'lucide-react';
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import {
@@ -12,8 +12,6 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { useSwipeable } from 'react-swipeable';
-import EmojiPicker from 'emoji-picker-react';
-import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 
 import { ChatCrypto } from "@/lib/crypto";
 // Actually, CometChatRoom passes decrypted messages. But for files, we decided to pass the URL and a flag.
@@ -278,26 +276,6 @@ function MessageBubble({
                   </button>
                 );
               })}
-              <div className="w-px h-6 bg-slate-200 dark:bg-slate-700 mx-1" />
-              <Popover>
-                <PopoverTrigger asChild>
-                  <button 
-                    className="p-1.5 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-full text-slate-500"
-                  >
-                    <SmilePlus className="h-5 w-5" />
-                  </button>
-                </PopoverTrigger>
-                <PopoverContent className="w-full p-0 border-none" align="center" side="top">
-                  <EmojiPicker 
-                    onEmojiClick={(emojiData) => {
-                      onReact?.(message._id, emojiData.emoji);
-                      setShowReactionPicker(false);
-                    }}
-                    width={300}
-                    height={400}
-                  />
-                </PopoverContent>
-              </Popover>
             </div>
           </>
         )}

@@ -81,7 +81,7 @@ npm run convex:deploy:prod   # Deploy backend functions to production target
 
 # Create environment file
 cp .env.example .env
-# Then set VITE_CONVEX_URL and VITE_CONVEX_SITE_URL to your production Convex URLs
+# Then set VITE_CONVEX_URL to your production Convex URL
 
 # Start development server
 pnpm dev
@@ -152,7 +152,8 @@ src/
 - Use target-safe scripts so production and development never get mixed.
 - In your frontend hosting (Vercel/Netlify), always set:
   - `VITE_CONVEX_URL` to your production Convex cloud URL
-  - `VITE_CONVEX_SITE_URL` to your production Convex site URL
+- No JWT auth secret is required for this anonymous room-session model.
+- Run `npm run doctor:convex` before release to catch env drift.
 
 ### Production Build
 
@@ -194,7 +195,6 @@ See **[DEPLOYMENT_GUIDE.md](DEPLOYMENT_GUIDE.md)** for step-by-step instructions
 | Variable | Required | Description |
 |---|---|---|
 | `VITE_CONVEX_URL` | Yes | Convex deployment URL |
-| `VITE_CONVEX_SITE_URL` | Yes | Convex site URL used by auth provider discovery |
 | `VITE_STUN_URLS` | No | Comma-separated STUN URLs for WebRTC |
 
 ---

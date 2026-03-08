@@ -1,29 +1,38 @@
 import { v } from "convex/values";
 import { mutation, query } from "./_generated/server";
-import { getCurrentUser } from "./users";
 import type { Id } from "./_generated/dataModel";
+import { computeReadPatch } from "../lib/message-conflict-utils";
+import { requireRoomParticipantSession, verifyRoomParticipantSession } from "./sessionAuth";
 
-const ALLOWED_REACTIONS = new Set(["👍", "❤️", "😂", "🔥", "🎉", "😮", "😢", "👏"]);
+const HEART_VARIANTS = new Set(["❤", "❤️"]);
+const ALLOWED_REACTIONS = new Set(["👍", "❤️", "😂", "😮", "😢", "🙏"]);
 
-// Add: centralized error handler utility
+function normalizeReactionEmoji(value: string) {
+  const emoji = value.trim();
+  if (HEART_VARIANTS.has(emoji)) return "❤️";
+  return emoji;
+}
+
 function handleConvexError(scope: string, e: unknown): never {
   console.error(`[${scope}]`, e);
   if (e instanceof Error && e.message) {
-    // Re-throw sanitized error message
     throw new Error(e.message);
   }
   throw new Error("Unexpected server error.");
 }
 
-async function requireAuthenticatedUser(ctx: unknown) {
-  const user = await getCurrentUser(ctx as never);
-  if (!user?._id) {
-    throw new Error("Unauthorized");
+async function requireActiveRoom(ctx: any, roomId: string) {
+  const room = await ctx.db
+    .query("rooms")
+    .withIndex("by_room_id", (q: any) => q.eq("roomId", roomId))
+    .filter((q: any) => q.eq(q.field("isActive"), true))
+    .first();
+  if (!room || room.expiresAt < Date.now()) {
+    throw new Error("Room not found or expired");
   }
-  return user;
+  return room;
 }
 
-// Send a message
 export const sendMessage = mutation({
   args: {
     roomId: v.string(),
@@ -31,6 +40,7 @@ export const sendMessage = mutation({
     encryptionKeyId: v.string(),
     selfDestruct: v.optional(v.boolean()),
     participantId: v.id("participants"),
+    participantToken: v.string(),
     messageType: v.optional(v.union(v.literal("text"), v.literal("image"), v.literal("file"), v.literal("audio"))),
     storageId: v.optional(v.string()),
     fileName: v.optional(v.string()),
@@ -40,9 +50,12 @@ export const sendMessage = mutation({
   },
   handler: async (ctx, args) => {
     try {
-      const user = await requireAuthenticatedUser(ctx);
+      const participant = await requireRoomParticipantSession(ctx, {
+        roomId: args.roomId,
+        participantId: args.participantId,
+        participantToken: args.participantToken,
+      });
 
-      // Validate content
       const body = args.content?.trim() ?? "";
       if (!body && !args.storageId) {
         throw new Error("Message content cannot be empty.");
@@ -54,35 +67,23 @@ export const sendMessage = mutation({
         throw new Error("Missing encryption key reference.");
       }
 
-      // Validate room exists and is active / not expired
-      const room = await ctx.db
-        .query("rooms")
-        .withIndex("by_room_id", (q) => q.eq("roomId", args.roomId))
-        .filter((q) => q.eq(q.field("isActive"), true))
-        .first();
-      if (!room || room.expiresAt < Date.now()) {
-        throw new Error("Room not found or expired");
-      }
-
-      // Resolve participant from provided participantId
-      const participant = await ctx.db.get(args.participantId);
-      if (
-        !participant ||
-        participant.roomId !== args.roomId ||
-        !participant.isActive ||
-        participant.userId !== user._id
-      ) {
-        throw new Error("You must join the room first");
-      }
+      const room = await requireActiveRoom(ctx, args.roomId);
 
       const now = Date.now();
-      const expiresAt = now + 2 * 60 * 60 * 1000; // 2 hours TTL
-      const selfDestructAt = args.selfDestruct ? now + 10 * 60 * 1000 : undefined; // 10 minutes
+      const expiresAt = Math.min(room.expiresAt, now + 2 * 60 * 60 * 1000);
+      const selfDestructAt = args.selfDestruct ? now + 10 * 60 * 1000 : undefined;
+
       let resolvedReplyTo: Id<"messages"> | undefined;
+      let resolvedReplyToPreview:
+        | {
+            senderName: string;
+            content: string;
+            type: "text" | "image" | "file" | "audio" | "system";
+          }
+        | undefined;
 
       const rawReplyTo = args.replyTo?.trim();
       if (rawReplyTo) {
-        // Best-effort: invalid or stale reply ids should not block sending the new message.
         const normalizedReplyTo = ctx.db.normalizeId("messages", rawReplyTo);
         if (normalizedReplyTo) {
           const parent = await ctx.db.get(normalizedReplyTo);
@@ -93,13 +94,22 @@ export const sendMessage = mutation({
             (!parent.selfDestructAt || parent.selfDestructAt > now)
           ) {
             resolvedReplyTo = parent._id;
+            resolvedReplyToPreview = {
+              senderName: parent.senderName,
+              content: parent.content,
+              type:
+                parent.messageType === "join" || parent.messageType === "leave"
+                  ? "system"
+                  : parent.messageType,
+            };
           }
         }
       }
 
       const messageId = await ctx.db.insert("messages", {
         roomId: args.roomId,
-        senderId: user._id,
+        senderId: undefined,
+        senderParticipantId: participant._id,
         senderName: participant.displayName,
         senderAvatar: participant.avatar,
         content: body,
@@ -113,9 +123,9 @@ export const sendMessage = mutation({
         expiresAt,
         encryptionKeyId: args.encryptionKeyId,
         replyTo: resolvedReplyTo,
+        replyToPreview: resolvedReplyToPreview,
       });
 
-      // Update participant activity
       await ctx.db.patch(participant._id, { lastSeen: now });
 
       return messageId;
@@ -126,10 +136,19 @@ export const sendMessage = mutation({
 });
 
 export const generateUploadUrl = mutation({
-  args: {},
-  handler: async (ctx) => {
+  args: {
+    roomId: v.string(),
+    participantId: v.id("participants"),
+    participantToken: v.string(),
+  },
+  handler: async (ctx, args) => {
     try {
-      await requireAuthenticatedUser(ctx);
+      await requireActiveRoom(ctx, args.roomId);
+      await requireRoomParticipantSession(ctx, {
+        roomId: args.roomId,
+        participantId: args.participantId,
+        participantToken: args.participantToken,
+      });
       return await ctx.storage.generateUploadUrl();
     } catch (e) {
       handleConvexError("messages.generateUploadUrl", e);
@@ -137,39 +156,30 @@ export const generateUploadUrl = mutation({
   },
 });
 
-// Get messages for a room
 export const getRoomMessages = query({
-  args: { 
+  args: {
     roomId: v.string(),
+    participantId: v.id("participants"),
+    participantToken: v.string(),
     limit: v.optional(v.number()),
   },
   handler: async (ctx, args) => {
     try {
-      const user = await requireAuthenticatedUser(ctx);
-      const limit = Math.max(1, Math.min(args.limit ?? 50, 200));
+      const participant = await verifyRoomParticipantSession(ctx, {
+        roomId: args.roomId,
+        participantId: args.participantId,
+        participantToken: args.participantToken,
+      });
+      if (!participant) return [];
 
-      // Validate room exists and not expired
       const room = await ctx.db
         .query("rooms")
         .withIndex("by_room_id", (q) => q.eq("roomId", args.roomId))
         .filter((q) => q.eq(q.field("isActive"), true))
         .first();
-      if (!room || room.expiresAt < Date.now()) {
-        return [];
-      }
+      if (!room || room.expiresAt < Date.now()) return [];
 
-      const participant = await ctx.db
-        .query("participants")
-        .withIndex("by_room_and_user", (q) =>
-          q.eq("roomId", args.roomId).eq("userId", user._id)
-        )
-        .filter((q) => q.eq(q.field("isActive"), true))
-        .first();
-      if (!participant) {
-        return [];
-      }
-
-      // Change to ascending order like WhatsApp
+      const limit = Math.max(1, Math.min(args.limit ?? 50, 500));
       const allMessages = await ctx.db
         .query("messages")
         .withIndex("by_room_id", (q) => q.eq("roomId", args.roomId))
@@ -178,13 +188,10 @@ export const getRoomMessages = query({
 
       const now = Date.now();
       const visible = allMessages.filter(
-        (m) => m.expiresAt > now && (!m.selfDestructAt || m.selfDestructAt > now)
+        (message) => message.expiresAt > now && (!message.selfDestructAt || message.selfDestructAt > now)
       );
-
       const windowMessages = visible.slice(Math.max(0, visible.length - limit));
 
-      // Resolve parent snapshots for reply messages so clients can always render reply UI
-      // even when the parent is outside the current window.
       const visibleById = new Map<string, (typeof windowMessages)[number]>(
         windowMessages.map((message) => [String(message._id), message])
       );
@@ -206,10 +213,10 @@ export const getRoomMessages = query({
         }
       }
 
-      // Enhance with storage URLs and reply previews
       const enhancedMessages = await Promise.all(
-        windowMessages.map(async (msg) => {
-          const parent = msg.replyTo ? replyParentMap.get(String(msg.replyTo)) : undefined;
+        windowMessages.map(async (message) => {
+          const parent = message.replyTo ? replyParentMap.get(String(message.replyTo)) : undefined;
+          const storedReplyPreview = message.replyToPreview;
           const replyToPreview = parent
             ? {
                 senderName: parent.senderName,
@@ -219,17 +226,17 @@ export const getRoomMessages = query({
                     ? "system"
                     : parent.messageType,
               }
-            : undefined;
+            : storedReplyPreview;
 
-          if (msg.storageId) {
+          if (message.storageId) {
             return {
-              ...msg,
-              fileUrl: await ctx.storage.getUrl(msg.storageId),
+              ...message,
+              fileUrl: await ctx.storage.getUrl(message.storageId),
               replyToPreview,
             };
           }
           return {
-            ...msg,
+            ...message,
             replyToPreview,
           };
         })
@@ -242,56 +249,43 @@ export const getRoomMessages = query({
   },
 });
 
-// Mark message as read
 export const markMessageRead = mutation({
   args: {
     messageId: v.id("messages"),
     participantId: v.id("participants"),
+    participantToken: v.string(),
   },
   handler: async (ctx, args) => {
     try {
-      const user = await requireAuthenticatedUser(ctx);
       const message = await ctx.db.get(args.messageId);
       if (!message) return;
 
-      // Ensure caller is a participant of the message's room
-      const participant = await ctx.db.get(args.participantId);
-      if (
-        !participant ||
-        participant.roomId !== message.roomId ||
-        !participant.isActive ||
-        participant.userId !== user._id
-      ) {
-        return;
-      }
+      const participant = await verifyRoomParticipantSession(ctx, {
+        roomId: message.roomId,
+        participantId: args.participantId,
+        participantToken: args.participantToken,
+      });
+      if (!participant) return;
 
       const now = Date.now();
-      await ctx.db.patch(args.messageId, {
-        isRead: true,
-        readAt: now,
-      });
-
-      // If message has self-destruct enabled and not previously read, set the timer
-      if (message.selfDestructAt && !message.readAt) {
-        const selfDestructAt = now + 10 * 60 * 1000; // 10 minutes from read
-        await ctx.db.patch(args.messageId, { selfDestructAt });
-      }
+      const patch = computeReadPatch(message, now);
+      if (!patch) return;
+      await ctx.db.patch(args.messageId, patch);
     } catch (e) {
       handleConvexError("messages.markMessageRead", e);
     }
   },
 });
 
-// Edit a message
 export const editMessage = mutation({
-  args: { 
+  args: {
     messageId: v.id("messages"),
     content: v.string(),
     participantId: v.id("participants"),
+    participantToken: v.string(),
   },
   handler: async (ctx, args) => {
     try {
-      const user = await requireAuthenticatedUser(ctx);
       const body = args.content?.trim() ?? "";
       if (!body) {
         throw new Error("Message content cannot be empty.");
@@ -309,24 +303,17 @@ export const editMessage = mutation({
         throw new Error("Only text messages can be edited");
       }
 
-      const participant = await ctx.db.get(args.participantId);
+      const participant = await requireRoomParticipantSession(ctx, {
+        roomId: message.roomId,
+        participantId: args.participantId,
+        participantToken: args.participantToken,
+      });
 
-      if (
-        !participant ||
-        participant.roomId !== message.roomId ||
-        !participant.isActive ||
-        participant.userId !== user._id
-      ) {
-        throw new Error("You must be in the room to edit messages");
-      }
-
-      // Only sender can edit their own messages
-      if (message.senderId && message.senderId !== user._id) {
+      if (message.senderParticipantId && message.senderParticipantId !== participant._id) {
         throw new Error("You can only edit your own messages");
       }
 
-      // Legacy anonymous messages can still be edited by original participant identity
-      if (!message.senderId && message.senderName !== participant.displayName) {
+      if (!message.senderParticipantId && message.senderName !== participant.displayName) {
         throw new Error("You can only edit your own messages");
       }
 
@@ -346,60 +333,37 @@ export const toggleReaction = mutation({
   args: {
     messageId: v.id("messages"),
     participantId: v.id("participants"),
+    participantToken: v.string(),
     emoji: v.string(),
   },
   handler: async (ctx, args) => {
     try {
-      const user = await requireAuthenticatedUser(ctx);
       const now = Date.now();
-      const emoji = args.emoji.trim();
-      if (!emoji || emoji.length > 8) {
-        throw new Error("Unsupported reaction");
-      }
-      if (!ALLOWED_REACTIONS.has(emoji)) {
-        throw new Error("Unsupported reaction");
+      const emoji = normalizeReactionEmoji(args.emoji);
+      if (!emoji || emoji.length > 8 || !ALLOWED_REACTIONS.has(emoji)) {
+        return { messageId: args.messageId, reactions: [], ignored: true as const };
       }
 
-      const [message, participant] = await Promise.all([
-        ctx.db.get(args.messageId),
-        ctx.db.get(args.participantId),
-      ]);
-
+      const message = await ctx.db.get(args.messageId);
       if (!message) {
-        // Message may have been deleted/expired after the UI rendered it.
-        // Treat this as a no-op to avoid noisy server errors.
         return { messageId: args.messageId, reactions: [], ignored: true as const };
       }
       if (message.expiresAt <= now || (message.selfDestructAt && message.selfDestructAt <= now)) {
-        // Message is logically expired but may not yet be cleaned up by background cleanup.
         return { messageId: args.messageId, reactions: [], ignored: true as const };
       }
-      // Allow reactions on all message types now
-      // if (message.messageType !== "text") {
-      //   throw new Error("Reactions are only available on text messages");
-      // }
-      if (!participant) {
-        throw new Error("You must be an active room participant");
-      }
-      if (participant.roomId !== message.roomId) {
-        throw new Error("Participant not in message room");
-      }
-      if (!participant.isActive) {
-        throw new Error("You must be an active room participant");
-      }
-      if (participant.userId !== user._id) {
-        throw new Error("You can only react as yourself");
-      }
+
+      const participant = await requireRoomParticipantSession(ctx, {
+        roomId: message.roomId,
+        participantId: args.participantId,
+        participantToken: args.participantToken,
+      });
 
       const existing = message.reactions ?? [];
       const reactionIndex = existing.findIndex(
-        (reaction) =>
-          reaction.participantId === args.participantId &&
-          reaction.emoji === emoji
+        (reaction) => reaction.participantId === args.participantId && reaction.emoji === emoji
       );
 
-      // One reaction per person per message: remove any existing reaction from this participant first
-      const withoutMine = existing.filter((r) => r.participantId !== args.participantId);
+      const withoutMine = existing.filter((reaction) => reaction.participantId !== args.participantId);
       const reactions =
         reactionIndex >= 0
           ? existing.filter((_, index) => index !== reactionIndex)
@@ -416,13 +380,13 @@ export const toggleReaction = mutation({
       try {
         await ctx.db.patch(args.messageId, { reactions });
       } catch (patchError) {
-        const errorMessage =
-          patchError instanceof Error ? patchError.message.toLowerCase() : "";
+        const errorMessage = patchError instanceof Error ? patchError.message.toLowerCase() : "";
         if (errorMessage.includes("not found") || errorMessage.includes("does not exist")) {
           return { messageId: args.messageId, reactions: [], ignored: true as const };
         }
         throw patchError;
       }
+
       return { messageId: args.messageId, reactions, ignored: false as const };
     } catch (e) {
       handleConvexError("messages.toggleReaction", e);
@@ -430,31 +394,29 @@ export const toggleReaction = mutation({
   },
 });
 
-// Delete a message (panic mode)
 export const deleteMessage = mutation({
-  args: { messageId: v.id("messages") },
+  args: {
+    messageId: v.id("messages"),
+    participantId: v.id("participants"),
+    participantToken: v.string(),
+  },
   handler: async (ctx, args) => {
     try {
-      const user = await requireAuthenticatedUser(ctx);
       const message = await ctx.db.get(args.messageId);
-      
       if (!message) return;
-      
-      // Only sender can delete their own messages
-      if (message.senderId === user._id) {
+
+      const participant = await requireRoomParticipantSession(ctx, {
+        roomId: message.roomId,
+        participantId: args.participantId,
+        participantToken: args.participantToken,
+      });
+
+      if (message.senderParticipantId && message.senderParticipantId === participant._id) {
         await ctx.db.delete(args.messageId);
         return;
       }
 
-      // Legacy anonymous messages: allow delete when caller owns matching participant identity.
-      const participant = await ctx.db
-        .query("participants")
-        .withIndex("by_room_and_user", (q) =>
-          q.eq("roomId", message.roomId).eq("userId", user._id)
-        )
-        .filter((q) => q.eq(q.field("isActive"), true))
-        .first();
-      if (participant && !message.senderId && message.senderName === participant.displayName) {
+      if (!message.senderParticipantId && message.senderName === participant.displayName) {
         await ctx.db.delete(args.messageId);
       }
     } catch (e) {
@@ -463,12 +425,23 @@ export const deleteMessage = mutation({
   },
 });
 
-// Clear all messages in a room (panic mode) — ADMIN ONLY
 export const clearRoomMessages = mutation({
-  args: { roomId: v.string(), callerParticipantId: v.id("participants") },
+  args: {
+    roomId: v.string(),
+    callerParticipantId: v.id("participants"),
+    callerParticipantToken: v.string(),
+  },
   handler: async (ctx, args) => {
     try {
-      const user = await requireAuthenticatedUser(ctx);
+      const caller = await requireRoomParticipantSession(ctx, {
+        roomId: args.roomId,
+        participantId: args.callerParticipantId,
+        participantToken: args.callerParticipantToken,
+      });
+
+      if (caller.role !== "admin") {
+        throw new Error("Only the admin can perform this action");
+      }
 
       const room = await ctx.db
         .query("rooms")
@@ -477,27 +450,6 @@ export const clearRoomMessages = mutation({
 
       if (!room || room.expiresAt < Date.now() || room.isActive !== true) {
         return;
-      }
-
-      // Permit if:
-      // - signed-in creator, or
-      // - caller participant exists in room and has role "admin"
-      let isAdmin = false;
-      if (user?._id && room.creatorId && user._id === room.creatorId) {
-        isAdmin = true;
-      } else {
-        const caller = await ctx.db.get(args.callerParticipantId);
-        isAdmin = !!(
-          caller &&
-          caller.roomId === args.roomId &&
-          caller.role === "admin" &&
-          caller.isActive &&
-          caller.userId === user._id
-        );
-      }
-
-      if (!isAdmin) {
-        throw new Error("Only the admin can perform this action");
       }
 
       const messages = await ctx.db

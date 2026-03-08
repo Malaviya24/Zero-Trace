@@ -85,11 +85,12 @@ You'll need this for the environment variable in the next step.
 Create a `.env` file in the project root:
 
 ```env
-VITE_CONVEX_SITE_URL=https://your-project-name-123.convex.site
 VITE_CONVEX_URL=https://your-project-name-123.convex.cloud
 ```
 
-Replace with your **production** Convex URLs from Step 2.
+Replace with your **production** Convex URL from Step 2.
+
+Do not put backend secrets in `.env` or `.env.local`.
 
 ---
 
@@ -154,7 +155,6 @@ nohup node server.js &
 4. Set the environment variable in Vercel dashboard:
    - Go to your project settings > Environment Variables
    - Add `VITE_CONVEX_URL` with your Convex URL
-   - Add `VITE_CONVEX_SITE_URL` with your Convex site URL
 
 ---
 
@@ -174,7 +174,7 @@ nohup node server.js &
 
 2. Deploy via Netlify CLI or connect your Git repository in the Netlify dashboard.
 
-3. Add `VITE_CONVEX_URL` and `VITE_CONVEX_SITE_URL` in Netlify under Site Settings > Environment Variables.
+3. Add `VITE_CONVEX_URL` in Netlify under Site Settings > Environment Variables.
 
 ---
 
@@ -199,7 +199,6 @@ nohup node server.js &
 4. Set up the environment variable:
    ```bash
    export VITE_CONVEX_URL=https://your-project-name-123.convex.cloud
-   export VITE_CONVEX_SITE_URL=https://your-project-name-123.convex.site
    ```
 
 5. Run with pm2:
@@ -249,9 +248,7 @@ nohup node server.js &
    RUN pnpm install --frozen-lockfile
    COPY . .
    ARG VITE_CONVEX_URL
-   ARG VITE_CONVEX_SITE_URL
    ENV VITE_CONVEX_URL=$VITE_CONVEX_URL
-   ENV VITE_CONVEX_SITE_URL=$VITE_CONVEX_SITE_URL
    RUN pnpm build
 
    FROM node:20-alpine
@@ -268,7 +265,7 @@ nohup node server.js &
 
 2. Build and run:
    ```bash
-   docker build --build-arg VITE_CONVEX_URL=https://your-url.convex.cloud --build-arg VITE_CONVEX_SITE_URL=https://your-url.convex.site -t chattrix .
+   docker build --build-arg VITE_CONVEX_URL=https://your-url.convex.cloud -t chattrix .
    docker run -p 5000:5000 chattrix
    ```
 
@@ -311,7 +308,6 @@ chattrix/
 | Variable | Required | Description |
 |---|---|---|
 | `VITE_CONVEX_URL` | Yes | Your Convex deployment URL |
-| `VITE_CONVEX_SITE_URL` | Yes | Your Convex site URL |
 
 ---
 
@@ -320,10 +316,16 @@ chattrix/
 ### "Convex functions not found" error
 Make sure you ran `npm run convex:deploy:prod` and that `convex.json` points to `src/convex/`.
 
+### "Unauthorized" errors on room/chat/call actions
+- Clear stale local room session for that room and rejoin once.
+- Confirm the browser still has a valid `room_session_<ROOM_ID>` entry with:
+  - `participantId`
+  - `participantToken`
+- If token or participant is stale, the backend correctly blocks writes.
+
 ### App talking to wrong Convex deployment
 - Confirm frontend env points to production:
   - `VITE_CONVEX_URL`
-  - `VITE_CONVEX_SITE_URL`
 - Confirm backend push target:
   - `npm run convex:env:prod` should show expected production environment variables.
 

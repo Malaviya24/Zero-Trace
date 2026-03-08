@@ -1,6 +1,5 @@
 import { api } from "@/convex/_generated/api";
 import type { Doc, Id } from "@/convex/_generated/dataModel";
-import { useAuth } from "@/hooks/use-auth";
 import { ChatCrypto } from "@/lib/crypto";
 import { Loader2 } from "lucide-react";
 import { useEffect, useState, useRef, useCallback, useMemo } from "react";
@@ -11,6 +10,7 @@ import { CallManager, useCall } from "@/call";
 import { typedApi } from "@/lib/api-types";
 import { mergeCachedMessages, resolveRemoteCallName, shouldResetCallOverlay } from "@/lib/call-chat-utils";
 import { captureCallReturnPath } from "@/lib/call-navigation";
+import { shouldSendReadMark } from "@/lib/message-conflict-utils";
 
 // CometChat Components
 import { CometChatLayout } from "./CometChatLayout";
@@ -60,6 +60,7 @@ interface ChatRoomProps {
   displayName: string;
   encryptionKey: CryptoKey;
   participantId: string;
+  participantToken: string;
 }
 
 const MESSAGE_CACHE_TTL_MS = 5 * 60 * 1000;
@@ -93,8 +94,7 @@ function readMessageCacheFromStorage(roomId: string): Message[] {
   return [];
 }
 
-export default function CometChatRoom({ roomId, displayName, encryptionKey, participantId }: ChatRoomProps) {
-  const { user } = useAuth();
+export default function CometChatRoom({ roomId, displayName, encryptionKey, participantId, participantToken }: ChatRoomProps) {
   const { state: callUiState, receiveIncomingCall, endCall } = useCall();
   const navigate = useNavigate();
   
@@ -103,9 +103,22 @@ export default function CometChatRoom({ roomId, displayName, encryptionKey, part
 
   // Queries
   const room = useQuery((api as any).rooms.getRoomByRoomId, { roomId });
-  const participants = useQuery((api as any).rooms.getRoomParticipants, { roomId });
-  const messages = useQuery((api as any).messages.getRoomMessages, { roomId, limit: 500 });
-  const activeCall = useQuery(typedApi.calls.listByRoom, { roomId });
+  const participants = useQuery((api as any).rooms.getRoomParticipants, {
+    roomId,
+    participantId: participantId as any,
+    participantToken,
+  });
+  const messages = useQuery((api as any).messages.getRoomMessages, {
+    roomId,
+    participantId: participantId as any,
+    participantToken,
+    limit: 500,
+  });
+  const activeCall = useQuery(typedApi.calls.listByRoom, {
+    roomId,
+    participantId: participantId as any,
+    participantToken,
+  });
 
   // Mutations
   const sendMessageMutation = useMutation((api as any).messages.sendMessage);
@@ -115,7 +128,6 @@ export default function CometChatRoom({ roomId, displayName, encryptionKey, part
   const updateActivityMutation = useMutation((api as any).rooms.updateActivity);
   const kickParticipantMutation = useMutation((api as any).rooms.kickParticipant);
   const clearParticipantsMutation = useMutation((api as any).rooms.clearParticipants);
-  const cleanupExpiredMutation = useMutation((api as any).rooms.cleanupExpired);
   const setTypingMutation = useMutation((api as any).rooms.setTyping);
   const rejectInviteMutation = useMutation(typedApi.calls.rejectInvite);
   const toggleReactionMutation = useMutation(typedApi.messages.toggleReaction);
@@ -134,6 +146,7 @@ export default function CometChatRoom({ roomId, displayName, encryptionKey, part
   const roomMissingSinceRef = useRef<number | null>(null);
   const participantMissingSinceRef = useRef<number | null>(null);
   const pendingMessagesRef = useRef<CometMessage[]>([]);
+  const sentReadIdsRef = useRef<Set<string>>(new Set());
 
   const removePendingMessage = useCallback((pendingId: string) => {
     setPendingMessages((prev) => {
@@ -171,6 +184,7 @@ export default function CometChatRoom({ roomId, displayName, encryptionKey, part
 
   // Message Cache Sync
   useEffect(() => {
+    sentReadIdsRef.current.clear();
     setMessageCache(readMessageCacheFromStorage(roomId));
   }, [roomId]);
 
@@ -278,7 +292,7 @@ export default function CometChatRoom({ roomId, displayName, encryptionKey, part
           fileSize: undefined,
           mimeType: undefined,
           isEncryptedFile: true,
-          replyTo: (msg as any).replyTo,
+          replyTo: (msg as any).replyTo ? String((msg as any).replyTo) : undefined,
           replyToMessage: undefined,
           replyToPreview,
         };
@@ -310,17 +324,33 @@ export default function CometChatRoom({ roomId, displayName, encryptionKey, part
 
   // Mark Read
   const safeMarkRead = useCallback(async (messageId: Id<"messages">) => {
+    const messageKey = String(messageId);
+    if (sentReadIdsRef.current.has(messageKey)) return;
+    sentReadIdsRef.current.add(messageKey);
     try {
-      await markReadMutation({ messageId, participantId: participantId as any });
+      await markReadMutation({
+        messageId,
+        participantId: participantId as any,
+        participantToken,
+      });
     } catch (error) {
+      sentReadIdsRef.current.delete(messageKey);
       console.debug("Mark read skipped:", error);
     }
-  }, [markReadMutation, participantId]);
+  }, [markReadMutation, participantId, participantToken]);
 
   useEffect(() => {
     visibleMessages.forEach(msg => {
-      if (!msg.isRead && msg.senderName !== displayName) {
-        safeMarkRead(msg._id);
+      if (
+        shouldSendReadMark(
+          String(msg._id),
+          msg.isRead,
+          msg.senderName,
+          displayName,
+          sentReadIdsRef.current
+        )
+      ) {
+        void safeMarkRead(msg._id);
       }
     });
   }, [visibleMessages, displayName, safeMarkRead]);
@@ -359,20 +389,17 @@ export default function CometChatRoom({ roomId, displayName, encryptionKey, part
     return () => window.clearTimeout(timeoutId);
   }, [room, navigate, roomId]);
 
-  // Activity & Cleanup
+  // Activity heartbeat
   useEffect(() => {
     const interval = setInterval(() => {
-      updateActivityMutation({ roomId }).catch(() => {});
+      updateActivityMutation({
+        roomId,
+        participantId: participantId as any,
+        participantToken,
+      }).catch(() => {});
     }, 30000);
     return () => clearInterval(interval);
-  }, [roomId, updateActivityMutation]);
-
-  useEffect(() => {
-    const interval = setInterval(() => {
-      cleanupExpiredMutation({}).catch(() => {});
-    }, 60000);
-    return () => clearInterval(interval);
-  }, [cleanupExpiredMutation]);
+  }, [roomId, participantId, participantToken, updateActivityMutation]);
 
   const generateUploadUrlMutation = useMutation((api as any).messages.generateUploadUrl);
 
@@ -390,7 +417,7 @@ export default function CometChatRoom({ roomId, displayName, encryptionKey, part
       {
         _id: pendingId,
         content,
-        senderId: user?._id as string | undefined,
+        senderId: participantId,
         senderName: displayName,
         senderAvatar: "",
         createdAt: Date.now(),
@@ -403,6 +430,14 @@ export default function CometChatRoom({ roomId, displayName, encryptionKey, part
         fileSize: file?.size,
         mimeType: file?.type,
         isEncryptedFile: false,
+        replyTo: replyTo?._id,
+        replyToMessage: replyTo
+          ? {
+              senderName: replyTo.senderName,
+              content: replyTo.content,
+              type: replyTo.type,
+            }
+          : undefined,
       },
     ]);
 
@@ -418,7 +453,11 @@ export default function CometChatRoom({ roomId, displayName, encryptionKey, part
         const encryptedBlob = new Blob([encryptedFileBuffer], { type: "application/octet-stream" });
 
         // 2. Get upload URL
-        const postUrl = await generateUploadUrlMutation();
+        const postUrl = await generateUploadUrlMutation({
+          roomId,
+          participantId: participantId as any,
+          participantToken,
+        });
         
         // 3. Upload Encrypted Blob
         const result = await fetch(postUrl, {
@@ -443,6 +482,7 @@ export default function CometChatRoom({ roomId, displayName, encryptionKey, part
         encryptionKeyId: "current",
         selfDestruct: room?.settings?.selfDestruct || false,
         participantId: participantId as any,
+        participantToken,
         messageType: type,
         storageId,
         replyTo: replyTo?._id,
@@ -472,6 +512,7 @@ export default function CometChatRoom({ roomId, displayName, encryptionKey, part
         messageId: messageId as any,
         content: encryptedContent,
         participantId: participantId as any,
+        participantToken,
       });
       toast.success("Edited");
     } catch {
@@ -482,7 +523,11 @@ export default function CometChatRoom({ roomId, displayName, encryptionKey, part
   const handleDeleteMessage = async (messageId: string) => {
     if (!window.confirm("Delete this message?")) return;
     try {
-      await deleteMessageMutation({ messageId: messageId as any });
+      await deleteMessageMutation({
+        messageId: messageId as any,
+        participantId: participantId as any,
+        participantToken,
+      });
       toast.success("Message deleted");
     } catch {
       toast.error("Failed to delete message");
@@ -493,8 +538,13 @@ export default function CometChatRoom({ roomId, displayName, encryptionKey, part
     const now = Date.now();
     if (typing && now - lastTypingSentRef.current < 800) return;
     lastTypingSentRef.current = now;
-    setTypingMutation({ roomId, isTyping: typing }).catch(() => {});
-  }, [roomId, setTypingMutation]);
+    setTypingMutation({
+      roomId,
+      participantId: participantId as any,
+      participantToken,
+      isTyping: typing,
+    }).catch(() => {});
+  }, [roomId, participantId, participantToken, setTypingMutation]);
 
   const handleReaction = useCallback(async (messageId: string, emoji: string) => {
     if (!messageId || messageId.startsWith("pending-")) return;
@@ -505,6 +555,7 @@ export default function CometChatRoom({ roomId, displayName, encryptionKey, part
       const result = await toggleReactionMutation({
         messageId: messageId as any,
         participantId: participantId as any,
+        participantToken,
         emoji,
       });
 
@@ -520,11 +571,15 @@ export default function CometChatRoom({ roomId, displayName, encryptionKey, part
       }
       toast.error("Failed to react");
     }
-  }, [displayedMessages, participantId, toggleReactionMutation]);
+  }, [displayedMessages, participantId, participantToken, toggleReactionMutation]);
 
   const handleLeaveRoom = async () => {
     try {
-      await leaveRoomMutation({ roomId, participantId: participantId as any });
+      await leaveRoomMutation({
+        roomId,
+        participantId: participantId as any,
+        participantToken,
+      });
       localStorage.removeItem(`room_session_${roomId}`);
       navigate("/");
     } catch {
@@ -545,7 +600,12 @@ export default function CometChatRoom({ roomId, displayName, encryptionKey, part
 
   const handleKick = async (participantIdToKick: string) => {
     try {
-      await kickParticipantMutation({ roomId, participantId: participantIdToKick as any, callerParticipantId: participantId as any });
+      await kickParticipantMutation({
+        roomId,
+        participantId: participantIdToKick as any,
+        callerParticipantId: participantId as any,
+        callerParticipantToken: participantToken,
+      });
       toast.success("Member removed");
     } catch (e: any) {
       toast.error(e?.message || "Failed to remove member");
@@ -555,7 +615,12 @@ export default function CometChatRoom({ roomId, displayName, encryptionKey, part
   const handlePanicMode = async () => {
     if (!window.confirm("Destroy room permanently?")) return;
     try {
-      await clearParticipantsMutation({ roomId, callerParticipantId: participantId as any, panic: true });
+      await clearParticipantsMutation({
+        roomId,
+        callerParticipantId: participantId as any,
+        callerParticipantToken: participantToken,
+        panic: true,
+      });
       localStorage.removeItem(`room_session_${roomId}`);
       navigate("/");
     } catch {
@@ -566,7 +631,8 @@ export default function CometChatRoom({ roomId, displayName, encryptionKey, part
   // Call Logic
   const activeCallList = activeCall as Doc<"calls">[] | undefined;
   const currentActiveCall = activeCallList?.find(c => c.status === "active" || c.status === "ringing");
-  const callerName = participants?.find((p: any) => p.userId === currentActiveCall?.createdBy)?.displayName || "Someone";
+  const callerParticipantId = (currentActiveCall as any)?.createdByParticipantId as string | undefined;
+  const callerName = participants?.find((p: any) => p._id === callerParticipantId)?.displayName || "Someone";
   const remoteCallName = resolveRemoteCallName(
     (participants || []).map((p: any) => ({ _id: p._id, displayName: p.displayName })),
     displayName,
@@ -597,8 +663,8 @@ export default function CometChatRoom({ roomId, displayName, encryptionKey, part
   const onlineCount = (participants || []).filter((p: any) => p.isActive).length;
   const isAdmin = useMemo(() => {
     const me = (participants || []).find((p: any) => p._id === participantId);
-    return me?.role === "admin" || (user && room?.creatorId && user._id === room.creatorId);
-  }, [participants, participantId, user, room]);
+    return me?.role === "admin";
+  }, [participants, participantId]);
 
   const mappedParticipants = (participants || []).map((p: any) => ({
     id: p._id,
@@ -632,9 +698,19 @@ export default function CometChatRoom({ roomId, displayName, encryptionKey, part
           subtitle={`${onlineCount} members active`}
           onlineCount={onlineCount}
           onToggleSidebar={() => setIsSidebarMobileOpen(true)}
-          onCall={(video) => {
+          onCall={async (video) => {
+            try {
+              const exportedCallKey = await ChatCrypto.exportKey(encryptionKey);
+              sessionStorage.setItem("call_e2ee_key", exportedCallKey);
+              sessionStorage.setItem("call_e2ee_room_id", roomId);
+            } catch (error) {
+              console.error("Failed to export call E2EE key:", error);
+              toast.error("Unable to prepare encrypted call key");
+              return;
+            }
             sessionStorage.setItem("call_display_name", displayName);
             sessionStorage.setItem("call_room_id", roomId);
+            sessionStorage.setItem("call_video_mode", video ? "1" : "0");
             captureCallReturnPath(roomId);
             navigate(`/call/new?video=${video}`);
           }}
@@ -643,7 +719,12 @@ export default function CometChatRoom({ roomId, displayName, encryptionKey, part
           onDeleteRoom={handlePanicMode}
           onCopyInvite={handleCopyInvite}
           onClearChat={() => {
-            clearParticipantsMutation({ roomId, callerParticipantId: participantId as any, panic: false });
+            clearParticipantsMutation({
+              roomId,
+              callerParticipantId: participantId as any,
+              callerParticipantToken: participantToken,
+              panic: false,
+            });
           }}
         />
 
@@ -675,15 +756,30 @@ export default function CometChatRoom({ roomId, displayName, encryptionKey, part
         remoteName={remoteCallName}
         onAcceptIncoming={async () => {
           if (!currentActiveCall) return;
+          try {
+            const exportedCallKey = await ChatCrypto.exportKey(encryptionKey);
+            sessionStorage.setItem("call_e2ee_key", exportedCallKey);
+            sessionStorage.setItem("call_e2ee_room_id", roomId);
+          } catch (error) {
+            console.error("Failed to export call E2EE key:", error);
+            toast.error("Unable to prepare encrypted call key");
+            return;
+          }
           sessionStorage.setItem("call_display_name", displayName);
           sessionStorage.setItem("call_room_id", roomId);
+          sessionStorage.setItem("call_video_mode", "0");
           captureCallReturnPath(roomId);
           setDismissedCallIds(prev => new Set(prev).add(currentActiveCall._id));
           navigate(`/call/${currentActiveCall._id}`);
         }}
         onRejectIncoming={async () => {
           if (!currentActiveCall) return;
-          rejectInviteMutation({ callId: currentActiveCall._id, displayName }).catch(console.error);
+          rejectInviteMutation({
+            callId: currentActiveCall._id,
+            roomParticipantId: participantId as any,
+            roomParticipantToken: participantToken,
+            displayName,
+          }).catch(console.error);
           setDismissedCallIds(prev => new Set(prev).add(currentActiveCall._id));
         }}
       />

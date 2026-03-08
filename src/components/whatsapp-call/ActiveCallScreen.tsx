@@ -1,5 +1,5 @@
 import React from 'react';
-import { Lock } from 'lucide-react';
+import { Lock, Users } from 'lucide-react';
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { WhatsAppCallControls } from './WhatsAppCallControls';
 
@@ -34,55 +34,65 @@ export function ActiveCallScreen({
   children,
   localVideo
 }: ActiveCallScreenProps) {
+  const statusLabel =
+    callStatus === "ringing"
+      ? "Ringing..."
+      : callStatus === "reconnecting"
+      ? "Reconnecting..."
+      : callDuration;
+
   return (
-    <div className="fixed inset-0 z-40 flex flex-col bg-[#0b141a] text-white overflow-hidden">
-      
-      {/* Header */}
-      <div className="flex flex-col items-center pt-8 pb-4 z-10">
-        <div className="flex items-center gap-1.5 text-gray-400 text-[10px] uppercase tracking-widest font-medium mb-2">
-          <Lock className="h-3 w-3" />
-          End-to-end encrypted
+    <div className="fixed inset-0 z-40 flex flex-col overflow-hidden bg-[#0b141a] text-white">
+      <div className="absolute inset-0 bg-[radial-gradient(circle_at_top,rgba(37,211,102,0.16),transparent_55%)]" />
+      <div className="absolute inset-0 bg-[linear-gradient(145deg,rgba(11,20,26,0.96),rgba(9,32,37,0.9),rgba(11,20,26,0.98))]" />
+
+      <div className="relative z-10 px-4 pt-5 sm:px-6 sm:pt-7">
+        <div className="mx-auto flex w-full max-w-xl items-center justify-between rounded-2xl border border-white/10 bg-black/35 px-3 py-2 backdrop-blur-xl">
+          <div className="min-w-0">
+            <h1 className="truncate text-base font-semibold sm:text-lg">{remoteName}</h1>
+            <p className="text-xs text-white/70">{statusLabel}</p>
+          </div>
+          <div className="flex items-center gap-2">
+            <span className="inline-flex items-center gap-1 rounded-full border border-emerald-300/20 bg-emerald-500/15 px-2 py-1 text-[10px] font-medium uppercase tracking-wide text-emerald-100">
+              <Lock className="h-3 w-3" />
+              Encrypted
+            </span>
+            <span className="inline-flex items-center gap-1 rounded-full bg-white/10 px-2 py-1 text-[10px] text-white/85">
+              <Users className="h-3 w-3" />
+              2
+            </span>
+          </div>
         </div>
-        <h1 className="text-2xl font-semibold tracking-tight">{remoteName}</h1>
-        <p className="text-sm text-gray-400 font-medium mt-1">
-          {callStatus === 'ringing' ? 'Ringing...' : callDuration}
-        </p>
       </div>
 
-      {/* Local Video Preview (Picture-in-Picture) */}
       {isVideoEnabled && localVideo && (
-        <div className="absolute top-20 right-4 w-32 h-48 bg-black rounded-lg shadow-xl overflow-hidden border border-white/10 z-30">
+        <div className="absolute right-4 top-24 z-30 h-48 w-32 overflow-hidden rounded-lg border border-white/10 bg-black shadow-xl">
           {localVideo}
         </div>
       )}
 
-      {/* Main Content Area (Avatar or Video) */}
-      <div className="flex-1 relative flex items-center justify-center w-full px-4">
-        {/* If video enabled (children present), show video. Else show avatar. */}
+      <div className="relative z-10 flex flex-1 items-center justify-center px-4">
         {children ? (
-          <div className="w-full h-full max-h-[80vh] rounded-2xl overflow-hidden shadow-2xl bg-black relative">
+          <div className="relative h-full max-h-[80vh] w-full overflow-hidden rounded-2xl bg-black shadow-2xl">
             {children}
           </div>
         ) : (
           <div className="relative">
-             {/* Large Avatar */}
-             <Avatar className="h-40 w-40 md:h-56 md:w-56 ring-4 ring-[#1f2c34] shadow-2xl">
-               <AvatarImage src={remoteAvatar} className="object-cover" />
-               <AvatarFallback className="bg-[#128C7E] text-5xl font-bold">
-                 {remoteName.slice(0, 2).toUpperCase()}
-               </AvatarFallback>
-             </Avatar>
-             
-             {/* Pulse ring for active speaker? Optional */}
-             {callStatus === 'ringing' && (
-               <div className="absolute inset-0 rounded-full border-2 border-[#25D366]/30 animate-ping duration-[2s]" />
-             )}
+            <Avatar className="h-40 w-40 shadow-2xl ring-4 ring-[#1f2c34] md:h-56 md:w-56">
+              <AvatarImage src={remoteAvatar} className="object-cover" />
+              <AvatarFallback className="bg-[#128C7E] text-5xl font-bold">
+                {remoteName.slice(0, 2).toUpperCase()}
+              </AvatarFallback>
+            </Avatar>
+
+            {callStatus === "ringing" && (
+              <div className="absolute inset-0 animate-ping rounded-full border-2 border-[#25D366]/30 duration-[2s]" />
+            )}
           </div>
         )}
       </div>
 
-      {/* Bottom Controls */}
-      <div className="w-full z-20">
+      <div className="relative z-20 w-full">
         <WhatsAppCallControls
           isAudioEnabled={isAudioEnabled}
           isVideoEnabled={isVideoEnabled}

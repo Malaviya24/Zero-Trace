@@ -34,6 +34,7 @@ export default function JoinRoom() {
   const [manualKeyInput, setManualKeyInput] = useState("");
   const [manualKeySet, setManualKeySet] = useState(false);
   const [participantId, setParticipantId] = useState<string | null>(null);
+  const [participantToken, setParticipantToken] = useState<string | null>(null);
   
   const room = useQuery((api as any).rooms.getRoomByRoomId, roomId ? { roomId } : "skip");
   const joinRoomMutation = useMutation((api as any).rooms.joinRoom);
@@ -50,6 +51,7 @@ export default function JoinRoom() {
       
       if (sessionData.participantId) {
         setParticipantId(sessionData.participantId);
+        setParticipantToken(sessionData.participantToken);
         setHasJoined(true);
       }
     }
@@ -98,18 +100,21 @@ export default function JoinRoom() {
       }
 
       // Capture returned participant id
-      const pid = await joinRoomMutation({
+      const joinResult = await joinRoomMutation({
         roomId,
         displayName: displayName.trim(),
         avatar,
         passwordHash: computedPasswordHash,
       });
 
-      if (!pid) {
+      const pid = (joinResult as { participantId?: string; participantToken?: string } | null)?.participantId;
+      const token = (joinResult as { participantId?: string; participantToken?: string } | null)?.participantToken;
+      if (!pid || !token) {
         throw new Error("Failed to join room: No participant ID returned");
       }
 
       setParticipantId(pid as unknown as string);
+      setParticipantToken(token);
       setHasJoined(true);
       
       // Use RoomService to save session
@@ -117,6 +122,7 @@ export default function JoinRoom() {
         displayName: displayName.trim(),
         avatar,
         participantId: pid as string,
+        participantToken: token,
       });
       
       toast.success("Joined room successfully!");
@@ -151,13 +157,14 @@ export default function JoinRoom() {
     );
   }
 
-  if (hasJoined && encryptionKey && participantId) {
+  if (hasJoined && encryptionKey && participantId && participantToken) {
     return (
       <CometChatRoom
         roomId={roomId}
         displayName={displayName}
         encryptionKey={encryptionKey}
         participantId={participantId}
+        participantToken={participantToken}
       />
     );
   }
@@ -268,6 +275,7 @@ export default function JoinRoom() {
               <Label htmlFor="displayName">Display Name</Label>
               <Input
                 id="displayName"
+                autoComplete="username"
                 value={displayName}
                 onChange={(e) => setDisplayName(e.target.value)}
                 placeholder="Enter your display name"
@@ -282,6 +290,7 @@ export default function JoinRoom() {
                 <Input
                   id="password"
                   type="password"
+                  autoComplete="current-password"
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
                   placeholder="Enter room password"

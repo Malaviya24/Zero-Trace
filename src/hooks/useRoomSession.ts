@@ -12,6 +12,7 @@ export function useRoomSession(roomId: string | undefined, locationHash: string)
     displayName: string;
     avatar: string;
     participantId: string;
+    participantToken: string;
     encryptionKey: CryptoKey;
   } | null>(null);
   const [hasUrlKey, setHasUrlKey] = useState(false);
@@ -57,6 +58,7 @@ export function useRoomSession(roomId: string | undefined, locationHash: string)
           setSessionData({
             ...identity,
             participantId: '',
+            participantToken: '',
             encryptionKey: service.getEncryptionService().getKey()!,
           });
         }

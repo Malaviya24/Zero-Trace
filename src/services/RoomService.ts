@@ -35,10 +35,15 @@ export class RoomService {
     displayName: string;
     avatar: string;
     participantId: string;
+    participantToken: string;
     encryptionKey: CryptoKey;
   } | null> {
     const session = SessionService.loadSession(this.roomId);
     if (!session) return null;
+    if (!session.participantToken || typeof session.participantToken !== "string") {
+      SessionService.clearSession(this.roomId);
+      return null;
+    }
 
     try {
       const key = await this.encryptionService.importKey(session.encryptionKey);
@@ -46,6 +51,7 @@ export class RoomService {
         displayName: session.displayName,
         avatar: session.avatar,
         participantId: session.participantId,
+        participantToken: session.participantToken,
         encryptionKey: key,
       };
     } catch (error) {
@@ -59,6 +65,7 @@ export class RoomService {
     displayName: string;
     avatar: string;
     participantId: string;
+    participantToken: string;
   }): Promise<void> {
     const exportedKey = await this.encryptionService.exportKey();
     SessionService.saveSession({
@@ -66,6 +73,7 @@ export class RoomService {
       displayName: data.displayName,
       avatar: data.avatar,
       participantId: data.participantId,
+      participantToken: data.participantToken,
       encryptionKey: exportedKey,
     });
   }

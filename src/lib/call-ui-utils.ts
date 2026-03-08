@@ -26,4 +26,7 @@ export function applyHoldToStream(
   stream.getAudioTracks().forEach((track) => {
     track.enabled = !shouldHold && isAudioEnabled;
   });
+  stream.getVideoTracks().forEach((track) => {
+    track.enabled = !shouldHold;
+  });
 }

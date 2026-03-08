@@ -59,6 +59,7 @@ const schema = defineSchema(
     messages: defineTable({
       roomId: v.string(), // room identifier
       senderId: v.optional(v.id("users")), // sender (can be anonymous)
+      senderParticipantId: v.optional(v.id("participants")), // session-bound sender identity
       senderName: v.string(), // anonymous display name
       senderAvatar: v.string(), // emoji avatar
       content: v.string(), // encrypted message content
@@ -81,6 +82,19 @@ const schema = defineSchema(
       expiresAt: v.number(), // TTL timestamp
       encryptionKeyId: v.string(), // which key was used for encryption
       replyTo: v.optional(v.id("messages")), // ID of the message being replied to
+      replyToPreview: v.optional(
+        v.object({
+          senderName: v.string(),
+          content: v.string(),
+          type: v.union(
+            v.literal("text"),
+            v.literal("image"),
+            v.literal("file"),
+            v.literal("audio"),
+            v.literal("system")
+          ),
+        })
+      ),
       editedAt: v.optional(v.number()), // when message was last edited
       reactions: v.optional(v.array(v.object({
         emoji: v.string(),
@@ -97,6 +111,7 @@ const schema = defineSchema(
     participants: defineTable({
       roomId: v.string(),
       userId: v.optional(v.id("users")), // can be anonymous
+      participantToken: v.optional(v.string()), // session token for room authorization
       displayName: v.string(), // anonymous display name
       avatar: v.string(), // emoji avatar
       isActive: v.boolean(), // currently connected
@@ -112,7 +127,8 @@ const schema = defineSchema(
     .index("by_room_id", ["roomId"])
     .index("by_user_id", ["userId"])
     .index("by_expires_at", ["expiresAt"])
-    .index("by_room_and_user", ["roomId", "userId"]),
+    .index("by_room_and_user", ["roomId", "userId"])
+    .index("by_room_and_token", ["roomId", "participantToken"]),
 
     // Encryption keys for key rotation
     encryptionKeys: defineTable({
@@ -141,6 +157,7 @@ const schema = defineSchema(
     calls: defineTable({
       roomId: v.optional(v.string()), // associated chat room (optional)
       createdBy: v.optional(v.id("users")), // call initiator (can be anonymous)
+      createdByParticipantId: v.optional(v.id("participants")), // initiator room participant
       status: v.union(
         v.literal("idle"),
         v.literal("ringing"),
@@ -169,6 +186,8 @@ const schema = defineSchema(
     callParticipants: defineTable({
       callId: v.id("calls"),
       userId: v.optional(v.id("users")), // can be anonymous
+      roomParticipantId: v.optional(v.id("participants")),
+      participantToken: v.optional(v.string()),
       displayName: v.string(),
       role: v.union(v.literal("admin"), v.literal("member")),
       leaveToken: v.optional(v.string()),
@@ -196,6 +215,7 @@ const schema = defineSchema(
     .index("by_call_id", ["callId"])
     .index("by_user_id", ["userId"])
     .index("by_call_and_user", ["callId", "userId"])
+    .index("by_call_and_room_participant", ["callId", "roomParticipantId"])
     .index("by_expires_at", ["expiresAt"]),
 
     // WebRTC signaling for automatic peer connection (MESH ARCHITECTURE)

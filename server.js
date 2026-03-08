@@ -20,7 +20,7 @@ app.use("*", async (c, next) => {
       "script-src 'self'",
       "style-src 'self' 'unsafe-inline'",
       "img-src 'self' data: blob: https://*",
-      "connect-src 'self' https://*.convex.cloud wss://*.convex.cloud https://*.metered.ca https://*.expressturn.com stun: turn:",
+      "connect-src 'self' https://*.convex.cloud wss://*.convex.cloud https://*.convex.site wss://*.convex.site https://*.metered.ca https://*.expressturn.com stun: turn:",
       "media-src 'self' blob:",
       "font-src 'self'",
       "frame-ancestors 'none'",

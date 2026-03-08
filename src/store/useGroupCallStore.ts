@@ -16,6 +16,7 @@ interface GroupCallState {
   localStream: MediaStream | null;
   peerConnections: Map<string, PeerConnection>;
   isAudioEnabled: boolean;
+  isVideoEnabled: boolean;
   callDuration: number;
   status: "idle" | "connecting" | "connected" | "disconnected" | "error";
   error: string | null;
@@ -25,9 +26,10 @@ interface GroupCallActions {
   setCallId: (callId: string) => void;
   setDisplayName: (name: string) => void;
   setMyParticipantId: (id: Id<"callParticipants">) => void;
-  startLocalMedia: () => Promise<void>;
+  startLocalMedia: (options?: { withVideo?: boolean }) => Promise<void>;
   stopLocalMedia: () => void;
   toggleAudio: () => void;
+  toggleVideo: () => Promise<void>;
   createPeerConnection: (participantId: string) => RTCPeerConnection;
   addTracksToPC: (participantId: string) => void;
   getPeerConnection: (participantId: string) => PeerConnection | undefined;
@@ -50,6 +52,7 @@ const initialState: GroupCallState = {
   localStream: null,
   peerConnections: new Map(),
   isAudioEnabled: true,
+  isVideoEnabled: false,
   callDuration: 0,
   status: "idle",
   error: null,
@@ -63,27 +66,43 @@ export const useGroupCallStore = create<GroupCallState & { actions: GroupCallAct
     setDisplayName: (name: string) => set({ displayName: name }),
     setMyParticipantId: (id: Id<"callParticipants">) => set({ myParticipantId: id }),
 
-    startLocalMedia: async () => {
+    startLocalMedia: async (options) => {
       const state = get();
+      const shouldEnableVideo = !!options?.withVideo;
       if (state.localStream && state.localStream.active) {
-        return;
+        const currentHasVideo = state.localStream.getVideoTracks().some((track) => track.readyState === "live");
+        if (currentHasVideo === shouldEnableVideo) {
+          set({ isVideoEnabled: currentHasVideo });
+          return;
+        }
+
+        state.localStream.getTracks().forEach((track) => track.stop());
+        set({ localStream: null });
       }
 
       if (state.localStream) {
-        state.localStream.getTracks().forEach(t => t.stop());
+        state.localStream.getTracks().forEach((t) => t.stop());
       }
 
       try {
-        console.log("[Call] Requesting microphone access...");
         const stream = await navigator.mediaDevices.getUserMedia({
           audio: CONFIG.media.audio,
-          video: false,
+          video: shouldEnableVideo ? CONFIG.media.video : false,
         });
-        console.log("[Call] Microphone access granted, tracks:", stream.getAudioTracks().length);
-        set({ localStream: stream, isAudioEnabled: true });
+        set({
+          localStream: stream,
+          isAudioEnabled: true,
+          isVideoEnabled: stream.getVideoTracks().some((track) => track.readyState === "live"),
+          error: null,
+        });
       } catch (error) {
-        console.error("[Call] Microphone access failed:", error);
-        set({ error: "Could not access microphone. Please allow microphone permission." });
+        console.error("[Call] Local media access failed:", error);
+        set({
+          error: shouldEnableVideo
+            ? "Could not access microphone/camera. Please allow permissions."
+            : "Could not access microphone. Please allow microphone permission.",
+          isVideoEnabled: false,
+        });
       }
     },
 
@@ -91,7 +110,7 @@ export const useGroupCallStore = create<GroupCallState & { actions: GroupCallAct
       const state = get();
       if (state.localStream) {
         state.localStream.getTracks().forEach(t => t.stop());
-        set({ localStream: null });
+        set({ localStream: null, isVideoEnabled: false });
       }
     },
 
@@ -104,6 +123,68 @@ export const useGroupCallStore = create<GroupCallState & { actions: GroupCallAct
         });
       }
       set({ isAudioEnabled: newState });
+    },
+
+    toggleVideo: async () => {
+      const state = get();
+      const localStream = state.localStream;
+      if (!localStream) return;
+
+      const existingVideoTracks = localStream.getVideoTracks();
+      const hasLiveVideoTrack = existingVideoTracks.some((track) => track.readyState === "live");
+
+      if (hasLiveVideoTrack) {
+        const peerConnections = Array.from(state.peerConnections.values());
+        for (const peerConnection of peerConnections) {
+          const sender = peerConnection.pc
+            .getSenders()
+            .find((candidate) => candidate.track?.kind === "video");
+          if (sender) {
+            try {
+              peerConnection.pc.removeTrack(sender);
+            } catch (error) {
+              console.warn("[Call] Failed to remove video sender:", error);
+            }
+          }
+        }
+
+        existingVideoTracks.forEach((track) => {
+          try {
+            localStream.removeTrack(track);
+          } catch {
+            // no-op
+          }
+          track.stop();
+        });
+        set({ localStream, isVideoEnabled: false });
+        return;
+      }
+
+      try {
+        const cameraStream = await navigator.mediaDevices.getUserMedia({
+          audio: false,
+          video: CONFIG.media.video,
+        });
+        const newVideoTrack = cameraStream.getVideoTracks()[0];
+        if (!newVideoTrack) {
+          set({ error: "No camera track available." });
+          return;
+        }
+
+        localStream.addTrack(newVideoTrack);
+        const peerConnections = Array.from(get().peerConnections.values());
+        for (const peerConnection of peerConnections) {
+          try {
+            peerConnection.pc.addTrack(newVideoTrack, localStream);
+          } catch (error) {
+            console.warn("[Call] Failed to add video track to peer:", error);
+          }
+        }
+        set({ localStream, isVideoEnabled: true, error: null });
+      } catch (error) {
+        console.error("[Call] Camera access failed:", error);
+        set({ error: "Could not access camera. Please allow camera permission." });
+      }
     },
 
     createPeerConnection: (participantId: string): RTCPeerConnection => {
@@ -141,11 +222,12 @@ export const useGroupCallStore = create<GroupCallState & { actions: GroupCallAct
       }
       const senders = peerConn.pc.getSenders();
       const hasAudio = senders.some(s => s.track?.kind === "audio");
-      if (!hasAudio) {
-        state.localStream.getTracks().forEach((track: MediaStreamTrack) => {
-          console.log(`[Call] Adding ${track.kind} track to peer ${participantId}`);
-          peerConn.pc.addTrack(track, state.localStream!);
-        });
+      const hasVideo = senders.some(s => s.track?.kind === "video");
+      for (const track of state.localStream.getTracks()) {
+        if (track.kind === "audio" && hasAudio) continue;
+        if (track.kind === "video" && hasVideo) continue;
+        console.log(`[Call] Adding ${track.kind} track to peer ${participantId}`);
+        peerConn.pc.addTrack(track, state.localStream);
       }
     },
 

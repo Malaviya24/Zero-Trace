@@ -12,10 +12,12 @@ import type * as auth from "../auth.js";
 import type * as callHistory from "../callHistory.js";
 import type * as calls from "../calls.js";
 import type * as connectionQuality from "../connectionQuality.js";
+import type * as crons from "../crons.js";
 import type * as encryption from "../encryption.js";
 import type * as http from "../http.js";
 import type * as messages from "../messages.js";
 import type * as rooms from "../rooms.js";
+import type * as sessionAuth from "../sessionAuth.js";
 import type * as signaling from "../signaling.js";
 import type * as users from "../users.js";
 
@@ -30,10 +32,12 @@ declare const fullApi: ApiFromModules<{
   callHistory: typeof callHistory;
   calls: typeof calls;
   connectionQuality: typeof connectionQuality;
+  crons: typeof crons;
   encryption: typeof encryption;
   http: typeof http;
   messages: typeof messages;
   rooms: typeof rooms;
+  sessionAuth: typeof sessionAuth;
   signaling: typeof signaling;
   users: typeof users;
 }>;

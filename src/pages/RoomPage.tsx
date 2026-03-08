@@ -23,13 +23,14 @@ export default function RoomPage() {
     );
   }
 
-  if (sessionData && sessionData.participantId && roomId) {
+  if (sessionData && sessionData.participantId && sessionData.participantToken && roomId) {
     return (
       <CometChatRoom
         roomId={roomId}
         displayName={sessionData.displayName}
         encryptionKey={sessionData.encryptionKey}
         participantId={sessionData.participantId}
+        participantToken={sessionData.participantToken}
       />
     );
   }

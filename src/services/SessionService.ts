@@ -15,6 +15,7 @@ export class SessionService {
     displayName: string;
     avatar: string;
     participantId: string;
+    participantToken: string;
     encryptionKey: string;
   }): void {
     try {
@@ -35,6 +36,7 @@ export class SessionService {
     displayName: string;
     avatar: string;
     participantId: string;
+    participantToken: string;
     encryptionKey: string;
     expiresAt: number;
   } | null {
@@ -48,6 +50,17 @@ export class SessionService {
 
       // Check if session is expired
       if (session.expiresAt && session.expiresAt <= Date.now()) {
+        this.clearSession(roomId);
+        return null;
+      }
+
+      if (
+        typeof session.displayName !== "string" ||
+        typeof session.avatar !== "string" ||
+        typeof session.participantId !== "string" ||
+        typeof session.participantToken !== "string" ||
+        typeof session.encryptionKey !== "string"
+      ) {
         this.clearSession(roomId);
         return null;
       }
