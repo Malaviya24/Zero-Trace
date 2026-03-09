@@ -1,7 +1,8 @@
-import { Users, Mic, MicOff, Video, VideoOff, Wifi, WifiOff } from "lucide-react";
+import { Users, Mic, MicOff, Video, VideoOff, Wifi, WifiOff, RotateCcw } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
+import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { motion } from "framer-motion";
 
@@ -12,14 +13,17 @@ interface Participant {
   isAudioEnabled?: boolean;
   isVideoEnabled?: boolean;
   connectionStatus?: "connected" | "connecting" | "disconnected";
+  canReconnect?: boolean;
+  reconnecting?: boolean;
 }
 
 interface ParticipantListProps {
   participants: Participant[];
   className?: string;
+  onReconnectParticipant?: (participantId: string) => void;
 }
 
-export function ParticipantList({ participants, className }: ParticipantListProps) {
+export function ParticipantList({ participants, className, onReconnectParticipant }: ParticipantListProps) {
   return (
     <div className={cn("flex flex-col h-full bg-gradient-to-b from-card to-card/95 border-l shadow-lg", className)}>
       <div className="p-4 border-b bg-muted/30 backdrop-blur-sm">
@@ -123,6 +127,20 @@ export function ParticipantList({ participants, className }: ParticipantListProp
                   )}
                 </div>
               </div>
+
+              {!participant.isLocal && onReconnectParticipant && participant.canReconnect && (
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  disabled={participant.reconnecting}
+                  onClick={() => onReconnectParticipant(participant._id)}
+                  className="h-8 border-white/20 bg-transparent px-2 text-xs text-white hover:bg-white/10"
+                >
+                  <RotateCcw className={cn("mr-1 h-3 w-3", participant.reconnecting && "animate-spin")} />
+                  {participant.reconnecting ? "Reconnecting" : "Reconnect"}
+                </Button>
+              )}
             </motion.div>
           ))}
         </div>

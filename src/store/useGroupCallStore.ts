@@ -9,6 +9,28 @@ interface PeerConnection {
   hasRemoteDescription: boolean;
 }
 
+function getTransceiverByKind(
+  pc: RTCPeerConnection,
+  kind: "audio" | "video"
+): RTCRtpTransceiver | undefined {
+  return pc.getTransceivers().find((transceiver) => {
+    const senderKind = transceiver.sender.track?.kind;
+    const receiverKind = transceiver.receiver.track.kind;
+    return senderKind === kind || receiverKind === kind;
+  });
+}
+
+function setTransceiverDirection(
+  transceiver: RTCRtpTransceiver,
+  direction: RTCRtpTransceiverDirection
+) {
+  try {
+    transceiver.direction = direction;
+  } catch {
+    // no-op
+  }
+}
+
 interface GroupCallState {
   callId: string | null;
   displayName: string | null;
@@ -97,11 +119,31 @@ export const useGroupCallStore = create<GroupCallState & { actions: GroupCallAct
         });
       } catch (error) {
         console.error("[Call] Local media access failed:", error);
+        if (shouldEnableVideo) {
+          try {
+            // Fall back to audio-only before entering listen-only mode.
+            const audioOnlyStream = await navigator.mediaDevices.getUserMedia({
+              audio: CONFIG.media.audio,
+              video: false,
+            });
+            set({
+              localStream: audioOnlyStream,
+              isAudioEnabled: true,
+              isVideoEnabled: false,
+              error: "Camera unavailable. Joined with microphone only.",
+            });
+            return;
+          } catch (audioError) {
+            console.error("[Call] Audio fallback access failed:", audioError);
+          }
+        }
+
+        // Keep call join possible without media permissions (listen-only).
         set({
-          error: shouldEnableVideo
-            ? "Could not access microphone/camera. Please allow permissions."
-            : "Could not access microphone. Please allow microphone permission.",
+          localStream: null,
+          isAudioEnabled: false,
           isVideoEnabled: false,
+          error: "Media unavailable. Joined in listen-only mode.",
         });
       }
     },
@@ -136,14 +178,24 @@ export const useGroupCallStore = create<GroupCallState & { actions: GroupCallAct
       if (hasLiveVideoTrack) {
         const peerConnections = Array.from(state.peerConnections.values());
         for (const peerConnection of peerConnections) {
-          const sender = peerConnection.pc
-            .getSenders()
-            .find((candidate) => candidate.track?.kind === "video");
-          if (sender) {
+          const transceiver = getTransceiverByKind(peerConnection.pc, "video");
+          if (transceiver) {
             try {
-              peerConnection.pc.removeTrack(sender);
+              await transceiver.sender.replaceTrack(null);
+              setTransceiverDirection(transceiver, "recvonly");
             } catch (error) {
               console.warn("[Call] Failed to remove video sender:", error);
+            }
+          } else {
+            const sender = peerConnection.pc
+              .getSenders()
+              .find((candidate) => candidate.track?.kind === "video");
+            if (sender) {
+              try {
+                peerConnection.pc.removeTrack(sender);
+              } catch (error) {
+                console.warn("[Call] Failed to remove video sender:", error);
+              }
             }
           }
         }
@@ -175,7 +227,13 @@ export const useGroupCallStore = create<GroupCallState & { actions: GroupCallAct
         const peerConnections = Array.from(get().peerConnections.values());
         for (const peerConnection of peerConnections) {
           try {
-            peerConnection.pc.addTrack(newVideoTrack, localStream);
+            const transceiver = getTransceiverByKind(peerConnection.pc, "video");
+            if (transceiver) {
+              await transceiver.sender.replaceTrack(newVideoTrack);
+              setTransceiverDirection(transceiver, "sendrecv");
+            } else {
+              peerConnection.pc.addTrack(newVideoTrack, localStream);
+            }
           } catch (error) {
             console.warn("[Call] Failed to add video track to peer:", error);
           }
@@ -199,6 +257,18 @@ export const useGroupCallStore = create<GroupCallState & { actions: GroupCallAct
         rtcpMuxPolicy: CONFIG.webrtc.rtcpMuxPolicy,
       });
 
+      // Keep offer SDP valid even when local media isn't ready yet.
+      try {
+        pc.addTransceiver("audio", { direction: "recvonly" });
+      } catch (error) {
+        console.warn("[Call] Failed to add audio transceiver:", error);
+      }
+      try {
+        pc.addTransceiver("video", { direction: "recvonly" });
+      } catch (error) {
+        console.warn("[Call] Failed to add video transceiver:", error);
+      }
+
       const peerConnection: PeerConnection = {
         pc,
         remoteStream: null,
@@ -220,13 +290,25 @@ export const useGroupCallStore = create<GroupCallState & { actions: GroupCallAct
         console.warn(`[Call] Cannot add tracks: no ${!peerConn ? 'peer connection' : 'local stream'} for ${participantId}`);
         return;
       }
-      const senders = peerConn.pc.getSenders();
-      const hasAudio = senders.some(s => s.track?.kind === "audio");
-      const hasVideo = senders.some(s => s.track?.kind === "video");
+
       for (const track of state.localStream.getTracks()) {
-        if (track.kind === "audio" && hasAudio) continue;
-        if (track.kind === "video" && hasVideo) continue;
-        console.log(`[Call] Adding ${track.kind} track to peer ${participantId}`);
+        const kind = track.kind as "audio" | "video";
+        const transceiver = getTransceiverByKind(peerConn.pc, kind);
+
+        if (transceiver) {
+          const currentTrackId = transceiver.sender.track?.id;
+          if (currentTrackId === track.id) continue;
+          console.log(`[Call] Replacing ${kind} track for peer ${participantId}`);
+          void transceiver.sender.replaceTrack(track).catch((error) => {
+            console.warn(`[Call] Failed to replace ${kind} track:`, error);
+          });
+          setTransceiverDirection(transceiver, "sendrecv");
+          continue;
+        }
+
+        const hasKindSender = peerConn.pc.getSenders().some((sender) => sender.track?.kind === kind);
+        if (hasKindSender) continue;
+        console.log(`[Call] Adding ${kind} track to peer ${participantId}`);
         peerConn.pc.addTrack(track, state.localStream);
       }
     },

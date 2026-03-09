@@ -37,6 +37,17 @@ type JoinCallResult = {
   leaveToken?: string;
 };
 
+type PeerNegotiationState = {
+  makingOffer: boolean;
+  retryCount: number;
+  failureCount: number;
+  nextAllowedAt: number;
+  circuitOpen: boolean;
+  generation: number;
+  resetCount: number;
+  queuedReason: string | null;
+};
+
 function readRoomSession(roomId: string | null | undefined): { participantId: string; participantToken: string } | null {
   if (!roomId) return null;
   try {
@@ -188,9 +199,10 @@ function GroupCallPageContent() {
   const hasNavigatedRef = useRef(false);
   const endingCallRef = useRef(false);
   const leaveTokenRef = useRef<string | null>(null);
-  const offerRetryCountsRef = useRef<Map<string, number>>(new Map());
   const offerRetryTimersRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
   const peerFirstSeenAtRef = useRef<Map<string, number>>(new Map());
+  const peerNegotiationRef = useRef<Map<string, PeerNegotiationState>>(new Map());
+  const participantReconcileTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const videoPreferenceFromQuery = useMemo(() => {
     const rawValue = new URLSearchParams(location.search).get("video");
     if (rawValue === null) return null;
@@ -521,10 +533,14 @@ function GroupCallPageContent() {
         processedSignalsRef.current.clear();
         leaveTokenRef.current = null;
         setCallParticipantToken(null);
-        offerRetryCountsRef.current.clear();
         offerRetryTimersRef.current.forEach((timer) => clearTimeout(timer));
         offerRetryTimersRef.current.clear();
         peerFirstSeenAtRef.current.clear();
+        peerNegotiationRef.current.clear();
+        if (participantReconcileTimerRef.current) {
+          clearTimeout(participantReconcileTimerRef.current);
+          participantReconcileTimerRef.current = null;
+        }
         sessionStorage.removeItem("call_display_name");
         sessionStorage.removeItem("call_e2ee_key");
         sessionStorage.removeItem("call_e2ee_room_id");
@@ -552,8 +568,12 @@ function GroupCallPageContent() {
       hasNavigatedRef.current = true;
       offerRetryTimersRef.current.forEach((timer) => clearTimeout(timer));
       offerRetryTimersRef.current.clear();
-      offerRetryCountsRef.current.clear();
       peerFirstSeenAtRef.current.clear();
+      peerNegotiationRef.current.clear();
+      if (participantReconcileTimerRef.current) {
+        clearTimeout(participantReconcileTimerRef.current);
+        participantReconcileTimerRef.current = null;
+      }
       actions.reset();
       sessionStorage.removeItem("call_e2ee_key");
       sessionStorage.removeItem("call_e2ee_room_id");
@@ -571,13 +591,130 @@ function GroupCallPageContent() {
     }
   }, []);
 
+  const getPeerNegotiationState = useCallback((participantId: string) => {
+    let currentState = peerNegotiationRef.current.get(participantId);
+    if (!currentState) {
+      currentState = {
+        makingOffer: false,
+        retryCount: 0,
+        failureCount: 0,
+        nextAllowedAt: 0,
+        circuitOpen: false,
+        generation: 0,
+        resetCount: 0,
+        queuedReason: null,
+      };
+      peerNegotiationRef.current.set(participantId, currentState);
+    }
+    return currentState;
+  }, []);
+
+  const resetNegotiationHealth = useCallback(
+    (participantId: string) => {
+      const stateForPeer = getPeerNegotiationState(participantId);
+      stateForPeer.retryCount = 0;
+      stateForPeer.failureCount = 0;
+      stateForPeer.nextAllowedAt = 0;
+      stateForPeer.circuitOpen = false;
+      stateForPeer.queuedReason = null;
+      clearOfferRetryTimer(participantId);
+    },
+    [clearOfferRetryTimer, getPeerNegotiationState]
+  );
+
   const isOfferInitiator = useCallback((myId: string, peerId: string) => {
     return String(myId) < String(peerId);
   }, []);
 
   const setupPeerConnectionRef = useRef<(participantId: string) => RTCPeerConnection | null>(() => null);
+  const runOfferAttemptRef = useRef<
+    (
+      participantId: string,
+      reason: string,
+      options?: {
+        iceRestart?: boolean;
+      }
+    ) => Promise<boolean>
+  >(async () => false);
 
-  const tryCreateAndSendOffer = useCallback(
+  const ensurePeerConnection = useCallback(
+    (participantId: string) => {
+      if (endingCallRef.current || hasNavigatedRef.current || call?.status === "ended") {
+        return null;
+      }
+
+      let existingPeer = useGroupCallStore.getState().actions.getPeerConnection(participantId);
+      if (existingPeer) return existingPeer;
+
+      peerSetupRef.current.add(participantId);
+      const created = setupPeerConnectionRef.current(participantId);
+      if (!created) {
+        peerSetupRef.current.delete(participantId);
+        return null;
+      }
+
+      existingPeer = useGroupCallStore.getState().actions.getPeerConnection(participantId);
+      return existingPeer ?? null;
+    },
+    [call?.status]
+  );
+
+  const cleanupPeerConnectionState = useCallback(
+    (participantId: string) => {
+      actions.removePeerConnection(participantId);
+      peerSetupRef.current.delete(participantId);
+      clearOfferRetryTimer(participantId);
+      peerFirstSeenAtRef.current.delete(participantId);
+      peerNegotiationRef.current.delete(participantId);
+    },
+    [actions, clearOfferRetryTimer]
+  );
+
+  const scheduleOfferRetry = useCallback(
+    (participantId: string, reason: string, customDelayMs?: number) => {
+      if (endingCallRef.current || hasNavigatedRef.current || call?.status === "ended") return;
+      if (offerRetryTimersRef.current.has(participantId)) return;
+
+      const stateForPeer = getPeerNegotiationState(participantId);
+      if (stateForPeer.circuitOpen) return;
+
+      const now = Date.now();
+      const retryExponent = Math.max(0, stateForPeer.retryCount - 1);
+      const computedDelay = Math.min(6000, 600 * 2 ** retryExponent);
+      const delayMs = customDelayMs ?? Math.max(computedDelay, stateForPeer.nextAllowedAt - now, 120);
+
+      const timer = setTimeout(() => {
+        offerRetryTimersRef.current.delete(participantId);
+        void runOfferAttemptRef.current(participantId, `retry:${reason}`);
+      }, delayMs);
+
+      offerRetryTimersRef.current.set(participantId, timer);
+    },
+    [call?.status, getPeerNegotiationState]
+  );
+
+  const hardResetPeerConnection = useCallback(
+    (participantId: string, reason: string) => {
+      if (endingCallRef.current || hasNavigatedRef.current || call?.status === "ended") return false;
+      console.warn(`[Call] Hard-resetting peer ${participantId} (${reason})`);
+
+      clearOfferRetryTimer(participantId);
+      actions.removePeerConnection(participantId);
+      peerSetupRef.current.delete(participantId);
+
+      const stateForPeer = getPeerNegotiationState(participantId);
+      stateForPeer.makingOffer = false;
+      stateForPeer.queuedReason = null;
+      stateForPeer.resetCount += 1;
+      stateForPeer.nextAllowedAt = Date.now() + 200;
+
+      const recreated = ensurePeerConnection(participantId);
+      return !!recreated;
+    },
+    [actions, call?.status, clearOfferRetryTimer, ensurePeerConnection, getPeerNegotiationState]
+  );
+
+  const runOfferAttempt = useCallback(
     async (
       participantId: string,
       reason: string,
@@ -591,25 +728,59 @@ function GroupCallPageContent() {
       const myId = useGroupCallStore.getState().myParticipantId;
       if (!myId) return false;
 
-      let peerConn = useGroupCallStore.getState().actions.getPeerConnection(participantId);
-      if (!peerConn) {
-        const created = setupPeerConnectionRef.current(participantId);
-        if (!created) return false;
-        peerConn = useGroupCallStore.getState().actions.getPeerConnection(participantId);
+      const stateForPeer = getPeerNegotiationState(participantId);
+      if (stateForPeer.circuitOpen) {
+        return false;
       }
+
+      if (stateForPeer.makingOffer) {
+        stateForPeer.queuedReason = reason;
+        return false;
+      }
+
+      const now = Date.now();
+      if (stateForPeer.nextAllowedAt > now) {
+        scheduleOfferRetry(participantId, reason, stateForPeer.nextAllowedAt - now);
+        return false;
+      }
+
+      const peerConn = ensurePeerConnection(participantId);
       if (!peerConn) return false;
 
       const pc = peerConn.pc;
+      if (pc.signalingState === "closed") return false;
+
+      if (pc.getTransceivers().length === 0 && pc.getSenders().length === 0) {
+        try {
+          pc.addTransceiver("audio", { direction: "recvonly" });
+          pc.addTransceiver("video", { direction: "recvonly" });
+        } catch (error) {
+          console.warn(`[Call] Failed to prepare fallback transceivers for ${participantId}:`, error);
+        }
+      }
+
       if (pc.signalingState !== "stable") {
         console.log(`[Call] Offer skipped for ${participantId} (${reason}), signalingState: ${pc.signalingState}`);
         return false;
       }
 
+      const currentGeneration = stateForPeer.generation;
+      stateForPeer.makingOffer = true;
+
       try {
         const offer = options?.iceRestart
           ? await pc.createOffer({ iceRestart: true })
           : await pc.createOffer();
+
+        if (getPeerNegotiationState(participantId).generation !== currentGeneration) {
+          return false;
+        }
+
         await pc.setLocalDescription(offer);
+
+        if (getPeerNegotiationState(participantId).generation !== currentGeneration) {
+          return false;
+        }
 
         const encryptedData = await encodeSignalPayload(pc.localDescription);
         await sendSignalRef.current({
@@ -621,49 +792,65 @@ function GroupCallPageContent() {
           toParticipantId: participantId as Id<"callParticipants">,
         });
 
-        offerRetryCountsRef.current.delete(participantId);
-        clearOfferRetryTimer(participantId);
+        resetNegotiationHealth(participantId);
         return true;
       } catch (error) {
         console.error(`[Call] Offer flow failed for ${participantId} (${reason}):`, error);
-        actions.removePeerConnection(participantId);
-        peerSetupRef.current.delete(participantId);
+
+        const latestState = getPeerNegotiationState(participantId);
+        latestState.failureCount += 1;
+        latestState.retryCount = Math.min(6, latestState.retryCount + 1);
+        latestState.nextAllowedAt = Date.now() + Math.min(6000, 600 * 2 ** Math.max(0, latestState.retryCount - 1));
+
+        if (latestState.failureCount >= 6) {
+          if (!latestState.circuitOpen) {
+            toast.error("Call connection unstable. Use Reconnect in People panel.");
+          }
+          latestState.circuitOpen = true;
+          clearOfferRetryTimer(participantId);
+          return false;
+        }
+
+        if (latestState.failureCount % 3 === 0) {
+          hardResetPeerConnection(participantId, `offer-failure:${reason}`);
+        }
+
+        scheduleOfferRetry(participantId, reason);
         return false;
+      } finally {
+        const latestState = getPeerNegotiationState(participantId);
+        latestState.makingOffer = false;
+
+        const queuedReason = latestState.queuedReason;
+        latestState.queuedReason = null;
+        if (queuedReason && !latestState.circuitOpen && !endingCallRef.current && !hasNavigatedRef.current) {
+          setTimeout(() => {
+            void runOfferAttemptRef.current(participantId, `queued:${queuedReason}`);
+          }, 80);
+        }
       }
     },
-    [actions, call?.status, callParticipantToken, clearOfferRetryTimer, encodeSignalPayload, validCallId]
+    [
+      call?.status,
+      callParticipantToken,
+      clearOfferRetryTimer,
+      encodeSignalPayload,
+      ensurePeerConnection,
+      getPeerNegotiationState,
+      hardResetPeerConnection,
+      resetNegotiationHealth,
+      scheduleOfferRetry,
+      validCallId,
+    ]
   );
-
-  const scheduleOfferRetry = useCallback(
-    (participantId: string, reason: string) => {
-      if (endingCallRef.current || hasNavigatedRef.current || call?.status === "ended") return;
-      if (offerRetryTimersRef.current.has(participantId)) return;
-
-      const currentCount = offerRetryCountsRef.current.get(participantId) ?? 0;
-      if (currentCount >= 4) return;
-
-      const delayMs = Math.min(4000, 500 * 2 ** currentCount);
-      const nextCount = currentCount + 1;
-      offerRetryCountsRef.current.set(participantId, nextCount);
-
-      const timer = setTimeout(() => {
-        offerRetryTimersRef.current.delete(participantId);
-        void tryCreateAndSendOffer(participantId, `retry-${nextCount}:${reason}`);
-      }, delayMs);
-      offerRetryTimersRef.current.set(participantId, timer);
-    },
-    [call?.status, tryCreateAndSendOffer]
-  );
+  runOfferAttemptRef.current = runOfferAttempt;
 
   const handleIceRestart = useCallback(
     async (pc: RTCPeerConnection, participantId: string) => {
       if (pc.signalingState !== "stable") return;
-      const sent = await tryCreateAndSendOffer(participantId, "ice-restart", { iceRestart: true });
-      if (!sent) {
-        scheduleOfferRetry(participantId, "ice-restart");
-      }
+      await runOfferAttemptRef.current(participantId, "ice-restart", { iceRestart: true });
     },
-    [scheduleOfferRetry, tryCreateAndSendOffer]
+    []
   );
 
   const setupPeerConnection = useCallback((participantId: string): RTCPeerConnection | null => {
@@ -672,10 +859,22 @@ function GroupCallPageContent() {
     }
     console.log(`[Call] Setting up peer for: ${participantId}`);
 
+    const negotiationState = getPeerNegotiationState(participantId);
+    negotiationState.generation += 1;
+    negotiationState.makingOffer = false;
+    negotiationState.queuedReason = null;
+    const generation = negotiationState.generation;
+
     const pc = useGroupCallStore.getState().actions.createPeerConnection(participantId);
 
+    const isStaleGeneration = () =>
+      endingCallRef.current ||
+      hasNavigatedRef.current ||
+      call?.status === "ended" ||
+      getPeerNegotiationState(participantId).generation !== generation;
+
     pc.onicecandidate = async (event) => {
-      if (endingCallRef.current || call?.status === "ended") return;
+      if (isStaleGeneration()) return;
       const myId = useGroupCallStore.getState().myParticipantId;
       if (event.candidate && myId && validCallId && callParticipantToken) {
         try {
@@ -695,6 +894,7 @@ function GroupCallPageContent() {
     };
 
     pc.ontrack = (event) => {
+      if (isStaleGeneration()) return;
       console.log("[Call] *** RECEIVED REMOTE TRACK ***", participantId,
         "kind:", event.track.kind,
         "readyState:", event.track.readyState,
@@ -713,25 +913,31 @@ function GroupCallPageContent() {
     };
 
     pc.onconnectionstatechange = () => {
+      if (isStaleGeneration()) return;
       const connState = pc.connectionState;
       console.log(`[Call] Connection state ${participantId}: ${connState}`);
       if (connState === "connected") {
         useGroupCallStore.getState().actions.setStatus("connected");
+        resetNegotiationHealth(participantId);
       } else if (connState === "failed") {
         console.log("[Call] Connection failed, attempting ICE restart");
-        handleIceRestart(pc, participantId);
+        void handleIceRestart(pc, participantId);
       }
     };
 
     pc.oniceconnectionstatechange = () => {
+      if (isStaleGeneration()) return;
       console.log(`[Call] ICE state ${participantId}: ${pc.iceConnectionState}`);
       if (pc.iceConnectionState === "failed") {
-        handleIceRestart(pc, participantId);
+        void handleIceRestart(pc, participantId);
       }
     };
 
     pc.onnegotiationneeded = async () => {
-      if (!useGroupCallStore.getState().myParticipantId || !validCallId || !callParticipantToken) return;
+      if (isStaleGeneration()) return;
+      const myParticipantId = useGroupCallStore.getState().myParticipantId;
+      if (!myParticipantId || !validCallId || !callParticipantToken) return;
+      if (!isOfferInitiator(String(myParticipantId), String(participantId))) return;
       if (pc.signalingState !== "stable") {
         console.log(`[Call] onnegotiationneeded skipped, state: ${pc.signalingState}`);
         return;
@@ -742,10 +948,7 @@ function GroupCallPageContent() {
         return;
       }
       try {
-        const sent = await tryCreateAndSendOffer(participantId, "renegotiation");
-        if (!sent) {
-          scheduleOfferRetry(participantId, "renegotiation");
-        }
+        await runOfferAttemptRef.current(participantId, "renegotiation");
       } catch (error) {
         console.error("[Call] Renegotiation failed:", error);
       }
@@ -760,9 +963,10 @@ function GroupCallPageContent() {
     call?.status,
     callParticipantToken,
     encodeSignalPayload,
+    getPeerNegotiationState,
     handleIceRestart,
-    scheduleOfferRetry,
-    tryCreateAndSendOffer,
+    isOfferInitiator,
+    resetNegotiationHealth,
     validCallId,
   ]);
   setupPeerConnectionRef.current = setupPeerConnection;
@@ -779,64 +983,73 @@ function GroupCallPageContent() {
       return;
     }
 
-    const otherParticipants = participants.filter(
-      (p: Doc<"callParticipants">) => p._id !== state.myParticipantId
-    );
+    if (participantReconcileTimerRef.current) {
+      clearTimeout(participantReconcileTimerRef.current);
+    }
 
-    otherParticipants.forEach((participant: Doc<"callParticipants">) => {
-      const pid = participant._id;
-      if (!peerFirstSeenAtRef.current.has(pid)) {
-        peerFirstSeenAtRef.current.set(pid, Date.now());
+    participantReconcileTimerRef.current = setTimeout(() => {
+      if (endingCallRef.current || hasNavigatedRef.current || call?.status === "ended") {
+        return;
       }
-      let createdNow = false;
 
-      if (!peerSetupRef.current.has(pid) && !state.peerConnections.has(pid)) {
-        createdNow = true;
-        peerSetupRef.current.add(pid);
-        console.log(`[Call] New participant: ${participant.displayName} (${pid})`);
+      const otherParticipants = participants.filter(
+        (p: Doc<"callParticipants">) => p._id !== state.myParticipantId
+      );
 
-        const pc = setupPeerConnection(pid);
-        if (!pc) {
-          peerSetupRef.current.delete(pid);
-          return;
+      otherParticipants.forEach((participant: Doc<"callParticipants">) => {
+        const pid = participant._id;
+        if (!peerFirstSeenAtRef.current.has(pid)) {
+          peerFirstSeenAtRef.current.set(pid, Date.now());
         }
-      }
 
-      if (createdNow && isOfferInitiator(String(state.myParticipantId), String(pid))) {
-        actions.setStatus("connecting");
-        void tryCreateAndSendOffer(pid, "participant-joined").then((sent) => {
-          if (!sent) {
-            scheduleOfferRetry(pid, "participant-joined");
+        const existingPeer = useGroupCallStore.getState().actions.getPeerConnection(pid);
+        const createdNow = !existingPeer;
+
+        if (!existingPeer) {
+          console.log(`[Call] New participant: ${participant.displayName} (${pid})`);
+          const ensured = ensurePeerConnection(pid);
+          if (!ensured) return;
+        }
+
+        if (createdNow && isOfferInitiator(String(state.myParticipantId), String(pid))) {
+          const negotiationState = getPeerNegotiationState(pid);
+          if (!negotiationState.circuitOpen) {
+            actions.setStatus("connecting");
+            void runOfferAttemptRef.current(pid, "participant-joined");
           }
-        });
-      } else {
-        console.log(`[Call] Waiting for offer from ${participant.displayName}`);
-      }
-    });
+        } else if (createdNow) {
+          console.log(`[Call] Waiting for offer from ${participant.displayName}`);
+        }
+      });
 
-    const currentPids = new Set(otherParticipants.map((p: Doc<"callParticipants">) => p._id as string));
-    state.peerConnections.forEach((_, pid) => {
-      if (!currentPids.has(pid)) {
-        console.log(`[Call] Participant left: ${pid}`);
-        actions.removePeerConnection(pid);
-        peerSetupRef.current.delete(pid);
-        offerRetryCountsRef.current.delete(pid);
-        clearOfferRetryTimer(pid);
-        peerFirstSeenAtRef.current.delete(pid);
+      const currentPids = new Set(otherParticipants.map((p: Doc<"callParticipants">) => p._id as string));
+      state.peerConnections.forEach((_, pid) => {
+        if (!currentPids.has(pid)) {
+          console.log(`[Call] Participant left: ${pid}`);
+          cleanupPeerConnectionState(pid);
+        }
+      });
+    }, 180);
+
+    return () => {
+      if (participantReconcileTimerRef.current) {
+        clearTimeout(participantReconcileTimerRef.current);
+        participantReconcileTimerRef.current = null;
       }
-    });
+    };
   }, [
+    call?.status,
     participants,
     myParticipant,
     state.myParticipantId,
     state.peerConnections,
     callParticipantToken,
-    setupPeerConnection,
     actions,
-    clearOfferRetryTimer,
+    cleanupPeerConnectionState,
+    ensurePeerConnection,
+    getPeerNegotiationState,
     isOfferInitiator,
-    scheduleOfferRetry,
-    tryCreateAndSendOffer,
+    runOfferAttempt,
   ]);
 
   useEffect(() => {
@@ -855,6 +1068,8 @@ function GroupCallPageContent() {
       for (const participant of participants) {
         if (participant._id === state.myParticipantId) continue;
         if (!isOfferInitiator(String(state.myParticipantId), String(participant._id))) continue;
+        const stateForPeer = getPeerNegotiationState(participant._id);
+        if (stateForPeer.circuitOpen || stateForPeer.makingOffer) continue;
 
         const peerConn = useGroupCallStore.getState().actions.getPeerConnection(participant._id);
         const isConnected =
@@ -862,8 +1077,7 @@ function GroupCallPageContent() {
           peerConn?.pc.connectionState === "connected" ||
           peerConn?.pc.iceConnectionState === "connected";
         if (isConnected) {
-          offerRetryCountsRef.current.delete(participant._id);
-          clearOfferRetryTimer(participant._id);
+          resetNegotiationHealth(participant._id);
           continue;
         }
 
@@ -871,11 +1085,12 @@ function GroupCallPageContent() {
         peerFirstSeenAtRef.current.set(participant._id, firstSeen);
         if (Date.now() - firstSeen < 6000) continue;
 
-        void tryCreateAndSendOffer(participant._id, "watchdog").then((sent) => {
-          if (!sent) {
-            scheduleOfferRetry(participant._id, "watchdog");
-          }
-        });
+        if (peerConn?.hasRemoteDescription && Date.now() - firstSeen > 12000) {
+          void runOfferAttemptRef.current(participant._id, "watchdog-ice-restart", { iceRestart: true });
+          continue;
+        }
+
+        void runOfferAttemptRef.current(participant._id, "watchdog");
       }
     }, 3000);
 
@@ -885,10 +1100,9 @@ function GroupCallPageContent() {
     participants,
     state.myParticipantId,
     callParticipantToken,
-    clearOfferRetryTimer,
+    getPeerNegotiationState,
     isOfferInitiator,
-    scheduleOfferRetry,
-    tryCreateAndSendOffer,
+    resetNegotiationHealth,
   ]);
 
   useEffect(() => {
@@ -925,18 +1139,13 @@ function GroupCallPageContent() {
 
         console.log(`[Call] Signal: ${signal.type} from ${fromPid}`);
 
-        let peerConn = useGroupCallStore.getState().actions.getPeerConnection(fromPid);
-
-        if (!peerConn) {
-          if (!peerSetupRef.current.has(fromPid)) {
-            peerSetupRef.current.add(fromPid);
-            setupPeerConnection(fromPid);
-            peerConn = useGroupCallStore.getState().actions.getPeerConnection(fromPid);
-          }
-        }
+        const peerConn = ensurePeerConnection(String(fromPid));
 
         if (!peerConn) {
           console.error("[Call] No peer connection for:", fromPid);
+          await markSignalProcessedSafe(signal._id, myParticipantId, {
+            localOnly: endingCallRef.current || hasNavigatedRef.current || call?.status === "ended",
+          });
           continue;
         }
 
@@ -1014,10 +1223,20 @@ function GroupCallPageContent() {
         } catch (error) {
           console.error(`[Call] Failed to process ${signal.type}:`, error);
           if (signal.type === "offer" || signal.type === "answer") {
-            actions.removePeerConnection(fromPid);
-            peerSetupRef.current.delete(fromPid);
+            const stateForPeer = getPeerNegotiationState(String(fromPid));
+            stateForPeer.failureCount += 1;
+            stateForPeer.retryCount = Math.min(6, stateForPeer.retryCount + 1);
+            stateForPeer.nextAllowedAt = Date.now() + Math.min(6000, 600 * 2 ** Math.max(0, stateForPeer.retryCount - 1));
+
+            if (stateForPeer.failureCount >= 6) {
+              stateForPeer.circuitOpen = true;
+              clearOfferRetryTimer(String(fromPid));
+            } else if (stateForPeer.failureCount % 3 === 0) {
+              hardResetPeerConnection(String(fromPid), `process-${signal.type}`);
+            }
+
             if (isOfferInitiator(String(myParticipantId), String(fromPid))) {
-              scheduleOfferRetry(String(fromPid), `process-${signal.type}`);
+              void runOfferAttemptRef.current(String(fromPid), `process-${signal.type}`);
             }
           }
           await markSignalProcessedSafe(signal._id, myParticipantId, {
@@ -1036,13 +1255,14 @@ function GroupCallPageContent() {
     state.myParticipantId,
     participants,
     validCallId,
-    setupPeerConnection,
+    ensurePeerConnection,
     markSignalProcessedSafe,
-    actions,
     decodeSignalPayload,
     callParticipantToken,
+    clearOfferRetryTimer,
+    getPeerNegotiationState,
+    hardResetPeerConnection,
     isOfferInitiator,
-    scheduleOfferRetry,
   ]);
 
   const handleEndCall = async () => {
@@ -1062,8 +1282,12 @@ function GroupCallPageContent() {
 
     offerRetryTimersRef.current.forEach((timer) => clearTimeout(timer));
     offerRetryTimersRef.current.clear();
-    offerRetryCountsRef.current.clear();
     peerFirstSeenAtRef.current.clear();
+    peerNegotiationRef.current.clear();
+    if (participantReconcileTimerRef.current) {
+      clearTimeout(participantReconcileTimerRef.current);
+      participantReconcileTimerRef.current = null;
+    }
     setIsPeopleSheetOpen(false);
     setIsChatSheetOpen(false);
     setIsAudioSheetOpen(false);
@@ -1137,6 +1361,26 @@ function GroupCallPageContent() {
     setIsSpeakerEnabled(true);
     toast.success(`Audio output: ${nextOutput.label}`);
   }, [audioOutputs, selectedOutputId, supportsSinkSelection]);
+
+  const handleReconnectParticipant = useCallback(
+    (participantId: string) => {
+      if (!state.myParticipantId) return;
+      const stateForPeer = getPeerNegotiationState(participantId);
+      stateForPeer.circuitOpen = false;
+      stateForPeer.failureCount = 0;
+      stateForPeer.retryCount = 0;
+      stateForPeer.nextAllowedAt = 0;
+      stateForPeer.queuedReason = null;
+      clearOfferRetryTimer(participantId);
+
+      hardResetPeerConnection(participantId, "manual-reconnect");
+      if (isOfferInitiator(String(state.myParticipantId), String(participantId))) {
+        void runOfferAttemptRef.current(participantId, "manual-reconnect");
+      }
+      toast.success("Reconnecting participant...");
+    },
+    [clearOfferRetryTimer, getPeerNegotiationState, hardResetPeerConnection, isOfferInitiator, state.myParticipantId]
+  );
 
   if (!callId) {
     return (
@@ -1285,6 +1529,7 @@ function GroupCallPageContent() {
     const isLocal = participant._id === resolvedMyParticipantId;
     const peerConnection = state.peerConnections.get(participant._id);
     const remoteStream = peerConnection?.remoteStream ?? null;
+    const negotiationState = getPeerNegotiationState(participant._id);
     const connectionStatus = isLocal
       ? "connected"
       : remoteStream ||
@@ -1302,6 +1547,12 @@ function GroupCallPageContent() {
       isAudioEnabled: isLocal ? state.isAudioEnabled : connectionStatus === "connected",
       isVideoEnabled: isLocal ? state.isVideoEnabled : hasLiveVideoTrack(remoteStream),
       connectionStatus,
+      canReconnect: !isLocal && connectionStatus !== "connected",
+      reconnecting:
+        !isLocal &&
+        (negotiationState.makingOffer ||
+          negotiationState.nextAllowedAt > Date.now() ||
+          offerRetryTimersRef.current.has(participant._id)),
     } as const;
   });
 
@@ -1472,7 +1723,11 @@ function GroupCallPageContent() {
               </SheetDescription>
             </SheetHeader>
             <div className="h-[calc(100%-5.5rem)] overflow-hidden rounded-xl border border-white/10 bg-black/30">
-              <ParticipantList participants={participantPanelData} className="h-full border-0 bg-transparent" />
+              <ParticipantList
+                participants={participantPanelData}
+                className="h-full border-0 bg-transparent"
+                onReconnectParticipant={handleReconnectParticipant}
+              />
             </div>
           </SheetContent>
         </Sheet>
