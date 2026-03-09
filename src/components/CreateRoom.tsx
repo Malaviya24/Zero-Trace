@@ -33,6 +33,7 @@ export default function CreateRoom() {
   const [settings, setSettings] = useState({
     selfDestruct: false,
     screenshotProtection: false, // Added back to satisfy old backend schema if not deployed
+    linkPreviewsEnabled: true,
     keyRotationInterval: 50,
   });
   const [isCreating, setIsCreating] = useState(false);
@@ -289,6 +290,21 @@ export default function CreateRoom() {
                   checked={settings.selfDestruct}
                   onCheckedChange={(checked) =>
                     setSettings(prev => ({ ...prev, selfDestruct: checked }))
+                  }
+                />
+              </div>
+
+              <div className="flex items-center justify-between">
+                <div className="space-y-0.5">
+                  <Label className="text-sm font-medium">Rich Link Previews</Label>
+                  <p className="text-xs text-muted-foreground">
+                    Show title/thumbnail cards when users share links
+                  </p>
+                </div>
+                <Switch
+                  checked={settings.linkPreviewsEnabled}
+                  onCheckedChange={(checked) =>
+                    setSettings(prev => ({ ...prev, linkPreviewsEnabled: checked }))
                   }
                 />
               </div>

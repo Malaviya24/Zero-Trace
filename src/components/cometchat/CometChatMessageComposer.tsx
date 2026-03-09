@@ -6,6 +6,7 @@ import {
   Smile,
   Mic,
   Image as ImageIcon,
+  Video,
   X,
   Loader2,
   FileText,
@@ -18,7 +19,7 @@ import EmojiPicker, { EmojiClickData } from "emoji-picker-react";
 export interface CometChatMessageComposerProps {
   onSend: (
     content: string,
-    type: "text" | "image" | "file" | "audio",
+    type: "text" | "image" | "video" | "file" | "audio",
     file?: File
   ) => Promise<void> | void;
   onTyping?: (isTyping: boolean) => void;
@@ -26,7 +27,7 @@ export interface CometChatMessageComposerProps {
   replyTo?: {
     senderName: string;
     content: string;
-    type: "text" | "image" | "file" | "audio" | "system";
+    type: "text" | "image" | "video" | "file" | "audio" | "system";
   } | null;
   onCancelReply?: () => void;
 }
@@ -45,7 +46,7 @@ export function CometChatMessageComposer({
   const [isRecording, setIsRecording] = useState(false);
   const [pendingAttachment, setPendingAttachment] = useState<{
     file: File;
-    type: "image" | "file";
+    type: "image" | "video" | "file";
   } | null>(null);
   const [attachmentPreviewUrl, setAttachmentPreviewUrl] = useState<string | null>(null);
 
@@ -56,7 +57,7 @@ export function CometChatMessageComposer({
   const chunksRef = useRef<BlobPart[]>([]);
 
   useEffect(() => {
-    if (!pendingAttachment || pendingAttachment.type !== "image") {
+    if (!pendingAttachment || (pendingAttachment.type !== "image" && pendingAttachment.type !== "video")) {
       setAttachmentPreviewUrl(null);
       return;
     }
@@ -114,7 +115,11 @@ export function CometChatMessageComposer({
     const file = e.target.files?.[0];
     if (!file) return;
 
-    const type = file.type.startsWith("image/") ? "image" : "file";
+    const type = file.type.startsWith("image/")
+      ? "image"
+      : file.type.startsWith("video/")
+      ? "video"
+      : "file";
     setPendingAttachment({ file, type });
   };
 
@@ -211,6 +216,8 @@ export function CometChatMessageComposer({
               <p className="text-xs text-muted-foreground truncate">
                 {replyTo.type === "image"
                   ? "Photo"
+                  : replyTo.type === "video"
+                    ? "Video"
                   : replyTo.type === "file"
                     ? "File"
                     : replyTo.type === "audio"
@@ -226,12 +233,20 @@ export function CometChatMessageComposer({
 
         {pendingAttachment && (
           <div className="mb-2 rounded-xl border border-slate-200/80 dark:border-slate-700/70 bg-white/80 dark:bg-[#2a3942] p-2 flex items-center gap-3 animate-in slide-in-from-bottom-2 fade-in-0">
-            {pendingAttachment.type === "image" && attachmentPreviewUrl ? (
+            {(pendingAttachment.type === "image" || pendingAttachment.type === "video") && attachmentPreviewUrl ? (
+              pendingAttachment.type === "image" ? (
               <img
                 src={attachmentPreviewUrl}
                 alt="Attachment preview"
                 className="h-16 w-16 rounded-lg object-cover border border-slate-200 dark:border-slate-700"
               />
+              ) : (
+                <video
+                  src={attachmentPreviewUrl}
+                  className="h-16 w-16 rounded-lg object-cover border border-slate-200 dark:border-slate-700"
+                  muted
+                />
+              )
             ) : (
               <div className="h-16 w-16 rounded-lg border border-slate-200 dark:border-slate-700 bg-primary/10 text-primary flex items-center justify-center">
                 <FileText className="h-7 w-7" />
@@ -241,7 +256,11 @@ export function CometChatMessageComposer({
             <div className="min-w-0 flex-1">
               <p className="text-sm font-medium truncate">{pendingAttachment.file.name}</p>
               <p className="text-xs text-muted-foreground">
-                {pendingAttachment.type === "image" ? "Photo" : "File"} • {formatFileSize(pendingAttachment.file.size)}
+                {pendingAttachment.type === "image"
+                  ? "Photo"
+                  : pendingAttachment.type === "video"
+                  ? "Video"
+                  : "File"} • {formatFileSize(pendingAttachment.file.size)}
               </p>
             </div>
 
@@ -297,6 +316,18 @@ export function CometChatMessageComposer({
                   }}
                 >
                   <ImageIcon className="h-4 w-4" /> Photo
+                </Button>
+                <Button
+                  variant="ghost"
+                  className="justify-start gap-2"
+                  onClick={() => {
+                    if (fileInputRef.current) {
+                      fileInputRef.current.accept = "video/*";
+                      fileInputRef.current.click();
+                    }
+                  }}
+                >
+                  <Video className="h-4 w-4" /> Video
                 </Button>
                 <Button
                   variant="ghost"

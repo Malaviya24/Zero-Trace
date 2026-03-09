@@ -1,23 +1,72 @@
 import { v } from "convex/values";
 import { internalMutation, mutation, query } from "./_generated/server";
 import { generateParticipantToken, requireRoomParticipantSession, sanitizeDisplayName, verifyRoomParticipantSession } from "./sessionAuth";
+import { getRoomByRoomId as getRoomDocByRoomId, hardDeleteRoomData, isRoomExpiredOrInactive } from "./roomLifecycle";
 
-async function cleanupExpiredData(ctx: { db: any }, now: number) {
+async function cleanupExpiredData(ctx: { db: any; storage: any }, now: number) {
   const expiredRooms = await ctx.db
     .query("rooms")
     .withIndex("by_expires_at", (q: any) => q.lt("expiresAt", now))
     .collect();
 
+  let hardDeletedRooms = 0;
+  let hardDeletedStorageObjects = 0;
+
   for (const room of expiredRooms) {
-    if (room.isActive) {
-      await ctx.db.patch(room._id, { isActive: false });
+    const deleted = await hardDeleteRoomData(ctx, room.roomId);
+    if (deleted.room > 0) {
+      hardDeletedRooms += 1;
+      hardDeletedStorageObjects += deleted.storageObjects;
     }
   }
 
-  const expiredMessages = await ctx.db
-    .query("messages")
+  const expiredSignals = await ctx.db
+    .query("signaling")
     .withIndex("by_expires_at", (q: any) => q.lt("expiresAt", now))
     .collect();
+  for (const signal of expiredSignals) {
+    try {
+      await ctx.db.delete(signal._id);
+    } catch {
+      // Ignore already-deleted rows.
+    }
+  }
+
+  const expiredCallParticipants = await ctx.db
+    .query("callParticipants")
+    .withIndex("by_expires_at", (q: any) => q.lt("expiresAt", now))
+    .collect();
+  for (const participant of expiredCallParticipants) {
+    try {
+      await ctx.db.delete(participant._id);
+    } catch {
+      // Ignore already-deleted rows.
+    }
+  }
+
+  const expiredCalls = await ctx.db
+    .query("calls")
+    .withIndex("by_expires_at", (q: any) => q.lt("expiresAt", now))
+    .collect();
+  for (const call of expiredCalls) {
+    try {
+      await ctx.db.delete(call._id);
+    } catch {
+      // Ignore already-deleted rows.
+    }
+  }
+
+  const expiredKeys = await ctx.db
+    .query("encryptionKeys")
+    .withIndex("by_expires_at", (q: any) => q.lt("expiresAt", now))
+    .collect();
+  for (const key of expiredKeys) {
+    try {
+      await ctx.db.delete(key._id);
+    } catch {
+      // Ignore already-deleted rows.
+    }
+  }
 
   const expiredParticipants = await ctx.db
     .query("participants")
@@ -25,8 +74,17 @@ async function cleanupExpiredData(ctx: { db: any }, now: number) {
     .collect();
 
   for (const participant of expiredParticipants) {
-    await ctx.db.delete(participant._id);
+    try {
+      await ctx.db.delete(participant._id);
+    } catch {
+      // Ignore already-deleted rows.
+    }
   }
+
+  const expiredMessages = await ctx.db
+    .query("messages")
+    .withIndex("by_expires_at", (q: any) => q.lt("expiresAt", now))
+    .collect();
 
   const selfDestructMessages = await ctx.db
     .query("messages")
@@ -44,7 +102,20 @@ async function cleanupExpiredData(ctx: { db: any }, now: number) {
   for (const messageId of messageIdsToDelete) {
     const normalizedId = ctx.db.normalizeId("messages", messageId);
     if (normalizedId) {
-      await ctx.db.delete(normalizedId);
+      const message = await ctx.db.get(normalizedId);
+      if (message?.storageId) {
+        try {
+          await ctx.storage.delete(message.storageId);
+          hardDeletedStorageObjects += 1;
+        } catch {
+          // Ignore missing storage objects.
+        }
+      }
+      try {
+        await ctx.db.delete(normalizedId);
+      } catch {
+        // Ignore already-deleted rows.
+      }
     }
   }
 
@@ -54,15 +125,39 @@ async function cleanupExpiredData(ctx: { db: any }, now: number) {
     .collect();
 
   for (const attempt of expiredAttempts) {
-    await ctx.db.delete(attempt._id);
+    try {
+      await ctx.db.delete(attempt._id);
+    } catch {
+      // Ignore already-deleted rows.
+    }
+  }
+
+  const expiredLinkPreviews = await ctx.db
+    .query("linkPreviewCache")
+    .withIndex("by_expires_at", (q: any) => q.lt("expiresAt", now))
+    .collect();
+
+  for (const preview of expiredLinkPreviews) {
+    try {
+      await ctx.db.delete(preview._id);
+    } catch {
+      // Ignore already-deleted rows.
+    }
   }
 
   return {
     expiredRooms: expiredRooms.length,
+    hardDeletedRooms,
+    hardDeletedStorageObjects,
+    expiredSignals: expiredSignals.length,
+    expiredCallParticipants: expiredCallParticipants.length,
+    expiredCalls: expiredCalls.length,
+    expiredKeys: expiredKeys.length,
     expiredMessages: expiredMessages.length,
     expiredParticipants: expiredParticipants.length,
     selfDestructMessages: selfDestructMessages.length,
     expiredAttempts: expiredAttempts.length,
+    expiredLinkPreviews: expiredLinkPreviews.length,
   };
 }
 
@@ -88,6 +183,7 @@ export const createRoom = mutation({
       v.object({
         selfDestruct: v.boolean(),
         screenshotProtection: v.optional(v.boolean()),
+        linkPreviewsEnabled: v.optional(v.boolean()),
         keyRotationInterval: v.number(),
       })
     ),
@@ -156,6 +252,7 @@ export const createRoom = mutation({
       settings: {
         selfDestruct: args.settings?.selfDestruct ?? false,
         screenshotProtection: args.settings?.screenshotProtection ?? false,
+        linkPreviewsEnabled: args.settings?.linkPreviewsEnabled ?? true,
         keyRotationInterval: args.settings?.keyRotationInterval ?? 50,
       },
     });
@@ -167,14 +264,10 @@ export const createRoom = mutation({
 export const getRoomByRoomId = query({
   args: { roomId: v.string() },
   handler: async (ctx, args) => {
-    const room = await ctx.db
-      .query("rooms")
-      .withIndex("by_room_id", (q) => q.eq("roomId", args.roomId))
-      .filter((q) => q.eq(q.field("isActive"), true))
-      .first();
+    const room = await getRoomDocByRoomId(ctx, args.roomId);
 
     if (!room) return null;
-    if (room.expiresAt < Date.now()) return null;
+    if (isRoomExpiredOrInactive(room)) return null;
 
     return {
       _id: room._id,
@@ -189,6 +282,17 @@ export const getRoomByRoomId = query({
       hasPassword: !!room.passwordVerifier,
       passwordSalt: room.passwordSalt,
     };
+  },
+});
+
+export const purgeIfExpired = mutation({
+  args: { roomId: v.string() },
+  handler: async (ctx, args) => {
+    const room = await getRoomDocByRoomId(ctx, args.roomId);
+    if (!room) return { purged: false };
+    if (!isRoomExpiredOrInactive(room)) return { purged: false };
+    const deleted = await hardDeleteRoomData(ctx, args.roomId);
+    return { purged: deleted.room > 0 };
   },
 });
 
@@ -210,17 +314,17 @@ export const joinRoom = mutation({
       throw new Error("Invalid avatar.");
     }
 
-    const room = await ctx.db
-      .query("rooms")
-      .withIndex("by_room_id", (q) => q.eq("roomId", args.roomId))
-      .filter((q) => q.eq(q.field("isActive"), true))
-      .first();
+    const room = await getRoomDocByRoomId(ctx, args.roomId);
+    const now = Date.now();
 
-    if (!room || room.expiresAt < Date.now()) {
+    if (!room) {
       throw new Error("Room not found or expired");
     }
 
-    const now = Date.now();
+    if (isRoomExpiredOrInactive(room, now)) {
+      await hardDeleteRoomData(ctx, args.roomId);
+      throw new Error("Room not found or expired");
+    }
     const windowMs = 10 * 60 * 1000;
     const threshold = 5;
 
@@ -485,61 +589,7 @@ export const clearParticipants = mutation({
       return { success: true, destroyed: false };
     }
 
-    const now = Date.now();
-    await ctx.db.patch(room._id, { isActive: false, expiresAt: now });
-
-    const roomMessages = await ctx.db
-      .query("messages")
-      .withIndex("by_room_id", (q) => q.eq("roomId", args.roomId))
-      .collect();
-    for (const message of roomMessages) {
-      await ctx.db.delete(message._id);
-    }
-
-    for (const participant of allParticipants) {
-      await ctx.db.delete(participant._id);
-    }
-
-    const roomKeys = await ctx.db
-      .query("encryptionKeys")
-      .withIndex("by_room_id", (q) => q.eq("roomId", args.roomId))
-      .collect();
-    for (const key of roomKeys) {
-      await ctx.db.delete(key._id);
-    }
-
-    const attempts = await ctx.db
-      .query("joinAttempts")
-      .withIndex("by_room_and_failed_and_created_at", (q) => q.eq("roomId", args.roomId).eq("failed", true))
-      .collect();
-    for (const attempt of attempts) {
-      await ctx.db.delete(attempt._id);
-    }
-
-    const roomCalls = await ctx.db
-      .query("calls")
-      .withIndex("by_room_id", (q) => q.eq("roomId", args.roomId))
-      .collect();
-
-    for (const call of roomCalls) {
-      const callParticipants = await ctx.db
-        .query("callParticipants")
-        .withIndex("by_call_id", (q) => q.eq("callId", call._id))
-        .collect();
-      for (const participant of callParticipants) {
-        await ctx.db.delete(participant._id);
-      }
-
-      const signals = await ctx.db
-        .query("signaling")
-        .withIndex("by_call_id", (q) => q.eq("callId", call._id))
-        .collect();
-      for (const signal of signals) {
-        await ctx.db.delete(signal._id);
-      }
-
-      await ctx.db.delete(call._id);
-    }
+    await hardDeleteRoomData(ctx, args.roomId);
 
     return { success: true, destroyed: true };
   },

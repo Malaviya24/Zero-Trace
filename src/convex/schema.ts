@@ -47,6 +47,7 @@ const schema = defineSchema(
       settings: v.optional(v.object({
         selfDestruct: v.boolean(), // enable self-destructing messages
         screenshotProtection: v.boolean(), // blur until hover
+        linkPreviewsEnabled: v.optional(v.boolean()), // render metadata cards for shared links
         keyRotationInterval: v.number(), // messages before key rotation
       })),
     })
@@ -66,6 +67,7 @@ const schema = defineSchema(
       messageType: v.union(
         v.literal("text"),
         v.literal("image"),
+        v.literal("video"),
         v.literal("file"),
         v.literal("audio"),
         v.literal("system"),
@@ -81,6 +83,7 @@ const schema = defineSchema(
       selfDestructAt: v.optional(v.number()), // self-destruct timestamp
       expiresAt: v.number(), // TTL timestamp
       encryptionKeyId: v.string(), // which key was used for encryption
+      linkPreviewEncrypted: v.optional(v.string()), // encrypted JSON metadata for link cards
       replyTo: v.optional(v.id("messages")), // ID of the message being replied to
       replyToPreview: v.optional(
         v.object({
@@ -89,6 +92,7 @@ const schema = defineSchema(
           type: v.union(
             v.literal("text"),
             v.literal("image"),
+            v.literal("video"),
             v.literal("file"),
             v.literal("audio"),
             v.literal("system")
@@ -106,6 +110,21 @@ const schema = defineSchema(
     .index("by_room_id", ["roomId"])
     .index("by_expires_at", ["expiresAt"])
     .index("by_self_destruct", ["selfDestructAt"]),
+
+    // URL preview cache to reduce repeated remote unfurl requests
+    linkPreviewCache: defineTable({
+      roomId: v.string(),
+      url: v.string(),
+      title: v.optional(v.string()),
+      description: v.optional(v.string()),
+      image: v.optional(v.string()),
+      siteName: v.optional(v.string()),
+      canonicalUrl: v.string(),
+      fetchedAt: v.number(),
+      expiresAt: v.number(),
+    })
+    .index("by_room_and_url", ["roomId", "url"])
+    .index("by_expires_at", ["expiresAt"]),
 
     // Active participants in rooms
     participants: defineTable({

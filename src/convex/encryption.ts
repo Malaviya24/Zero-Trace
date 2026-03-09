@@ -1,21 +1,30 @@
 import { v } from "convex/values";
 import { mutation, query } from "./_generated/server";
 import { requireRoomParticipantSession } from "./sessionAuth";
+import { getRoomByRoomId, hardDeleteRoomData, isRoomExpiredOrInactive } from "./roomLifecycle";
 
-async function getActiveRoom(ctx: any, roomId: string) {
-  const room = await ctx.db
-    .query("rooms")
-    .withIndex("by_room_id", (q: any) => q.eq("roomId", roomId))
-    .filter((q: any) => q.eq(q.field("isActive"), true))
-    .first();
-  if (!room || room.expiresAt < Date.now()) {
+async function getActiveRoom(
+  ctx: any,
+  roomId: string,
+  options: {
+    purgeIfExpired?: boolean;
+  } = {}
+) {
+  const room = await getRoomByRoomId(ctx, roomId);
+  if (!room) {
+    throw new Error("Room not found or expired");
+  }
+  if (isRoomExpiredOrInactive(room)) {
+    if (options.purgeIfExpired) {
+      await hardDeleteRoomData(ctx, roomId);
+    }
     throw new Error("Room not found or expired");
   }
   return room;
 }
 
 async function requireAdminMembership(ctx: any, roomId: string, participantId: any, participantToken: string) {
-  await getActiveRoom(ctx, roomId);
+  await getActiveRoom(ctx, roomId, { purgeIfExpired: true });
   const participant = await requireRoomParticipantSession(ctx, {
     roomId,
     participantId,

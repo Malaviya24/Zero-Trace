@@ -38,6 +38,7 @@ export default function JoinRoom() {
   
   const room = useQuery((api as any).rooms.getRoomByRoomId, roomId ? { roomId } : "skip");
   const joinRoomMutation = useMutation((api as any).rooms.joinRoom);
+  const purgeIfExpiredMutation = useMutation((api as any).rooms.purgeIfExpired);
 
   // Use the new OOP service layer for session management
   const { roomService, isRestoring, sessionData, hasUrlKey } = useRoomSession(roomId, location.hash);
@@ -56,6 +57,13 @@ export default function JoinRoom() {
       }
     }
   }, [sessionData]);
+
+  useEffect(() => {
+    if (!roomId) return;
+    purgeIfExpiredMutation({ roomId }).catch(() => {
+      // Best-effort purge trigger. Join/query flows still handle expired rooms.
+    });
+  }, [roomId, purgeIfExpiredMutation]);
 
   // ADD: handler to manually import key using EncryptionService
   const handleImportKey = async () => {

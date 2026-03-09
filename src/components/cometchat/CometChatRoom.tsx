@@ -11,6 +11,8 @@ import { typedApi } from "@/lib/api-types";
 import { mergeCachedMessages, resolveRemoteCallName, shouldResetCallOverlay } from "@/lib/call-chat-utils";
 import { captureCallReturnPath } from "@/lib/call-navigation";
 import { shouldSendReadMark } from "@/lib/message-conflict-utils";
+import { firstUrlFromText } from "@/lib/url-utils";
+import { useAction } from "convex/react";
 
 // CometChat Components
 import { CometChatLayout } from "./CometChatLayout";
@@ -18,17 +20,18 @@ import { CometChatSidebar } from "./CometChatSidebar";
 import { CometChatHeader } from "./CometChatHeader";
 import { CometChatMessageList, Message as CometMessageBase } from "./CometChatMessageList";
 import { CometChatMessageComposer } from "./CometChatMessageComposer";
+import { ScreenShield } from "@/components/security/ScreenShield";
 
 interface CometMessage extends CometMessageBase {
   replyToMessage?: {
     senderName: string;
     content: string;
-    type: 'text' | 'image' | 'file' | 'audio' | 'system';
+    type: 'text' | 'image' | 'video' | 'file' | 'audio' | 'system';
   };
   replyToPreview?: {
     senderName: string;
     content: string;
-    type: 'text' | 'image' | 'file' | 'audio' | 'system';
+    type: 'text' | 'image' | 'video' | 'file' | 'audio' | 'system';
   };
 }
 
@@ -37,7 +40,7 @@ interface Message {
   senderName: string;
   senderAvatar: string;
   content: string;
-  messageType: "text" | "image" | "file" | "audio" | "system" | "join" | "leave";
+  messageType: "text" | "image" | "video" | "file" | "audio" | "system" | "join" | "leave";
   isRead: boolean;
   readAt?: number;
   selfDestructAt?: number;
@@ -46,6 +49,7 @@ interface Message {
   encryptionKeyId: string;
   senderId?: Id<"users">;
   reactions?: MessageReaction[];
+  linkPreviewEncrypted?: string;
 }
 
 interface MessageReaction {
@@ -64,6 +68,7 @@ interface ChatRoomProps {
 }
 
 const MESSAGE_CACHE_TTL_MS = 5 * 60 * 1000;
+const MAX_ATTACHMENT_BYTES = 100 * 1024 * 1024;
 const isMessageActive = (message: Message, now = Date.now()) =>
   (!message.expiresAt || message.expiresAt > now) &&
   (!message.selfDestructAt || message.selfDestructAt > now);
@@ -132,6 +137,7 @@ export default function CometChatRoom({ roomId, displayName, encryptionKey, part
   const rejectInviteMutation = useMutation(typedApi.calls.rejectInvite);
   const toggleReactionMutation = useMutation(typedApi.messages.toggleReaction);
   const deleteMessageMutation = useMutation((api as any).messages.deleteMessage);
+  const unfurlUrlAction = useAction((api as any).messages.unfurlUrl);
 
   // Local State
   const [, setKeyRotationCount] = useState(0);
@@ -147,6 +153,24 @@ export default function CometChatRoom({ roomId, displayName, encryptionKey, part
   const participantMissingSinceRef = useRef<number | null>(null);
   const pendingMessagesRef = useRef<CometMessage[]>([]);
   const sentReadIdsRef = useRef<Set<string>>(new Set());
+  const sessionInvalidatedRef = useRef(false);
+
+  const isSessionInvalidError = useCallback((error: unknown) => {
+    const message = (error instanceof Error ? error.message : String(error ?? "")).toLowerCase();
+    return (
+      message.includes("unauthorized") ||
+      message.includes("room not found") ||
+      message.includes("expired")
+    );
+  }, []);
+
+  const invalidateRoomSession = useCallback((reason?: string) => {
+    if (sessionInvalidatedRef.current) return;
+    sessionInvalidatedRef.current = true;
+    localStorage.removeItem(`room_session_${roomId}`);
+    if (reason) toast.error(reason);
+    navigate(`/join/${roomId}`);
+  }, [navigate, roomId]);
 
   const removePendingMessage = useCallback((pendingId: string) => {
     setPendingMessages((prev) => {
@@ -177,10 +201,9 @@ export default function CometChatRoom({ roomId, displayName, encryptionKey, part
   // Validate Props
   useEffect(() => {
     if (!roomId || !displayName || !encryptionKey || !participantId) {
-      toast.error("Invalid room session. Please rejoin.");
-      navigate("/");
+      invalidateRoomSession("Invalid room session. Please rejoin.");
     }
-  }, [roomId, displayName, encryptionKey, participantId, navigate]);
+  }, [roomId, displayName, encryptionKey, participantId, invalidateRoomSession]);
 
   // Message Cache Sync
   useEffect(() => {
@@ -227,10 +250,10 @@ export default function CometChatRoom({ roomId, displayName, encryptionKey, part
             ? "system"
             : msg.messageType;
         const rawReplyToPreview = (msg as any).replyToPreview as
-          | { senderName: string; content: string; type: 'text' | 'image' | 'file' | 'audio' | 'system' }
+          | { senderName: string; content: string; type: 'text' | 'image' | 'video' | 'file' | 'audio' | 'system' }
           | undefined;
 
-        if (["text", "image", "file", "audio"].includes(normalizedType)) {
+        if (["text", "image", "video", "file", "audio"].includes(normalizedType)) {
           try {
             content = await ChatCrypto.decrypt(msg.content, encryptionKey);
           } catch {
@@ -241,7 +264,7 @@ export default function CometChatRoom({ roomId, displayName, encryptionKey, part
         let replyToPreview: CometMessage["replyToPreview"] | undefined;
         if (rawReplyToPreview) {
           let previewContent = rawReplyToPreview.content;
-          if (["text", "image", "file", "audio"].includes(rawReplyToPreview.type)) {
+          if (["text", "image", "video", "file", "audio"].includes(rawReplyToPreview.type)) {
             try {
               previewContent = await ChatCrypto.decrypt(rawReplyToPreview.content, encryptionKey);
             } catch {
@@ -253,6 +276,26 @@ export default function CometChatRoom({ roomId, displayName, encryptionKey, part
             content: previewContent,
             type: rawReplyToPreview.type,
           };
+        }
+
+        let linkPreview: CometMessage["linkPreview"] | undefined;
+        const rawLinkPreviewEncrypted = (msg as any).linkPreviewEncrypted as string | undefined;
+        if (normalizedType === "text" && rawLinkPreviewEncrypted) {
+          try {
+            const decrypted = await ChatCrypto.decrypt(rawLinkPreviewEncrypted, encryptionKey);
+            const parsed = JSON.parse(decrypted);
+            if (parsed && typeof parsed === "object" && typeof parsed.canonicalUrl === "string") {
+              linkPreview = {
+                canonicalUrl: parsed.canonicalUrl,
+                title: typeof parsed.title === "string" ? parsed.title : undefined,
+                description: typeof parsed.description === "string" ? parsed.description : undefined,
+                image: typeof parsed.image === "string" ? parsed.image : undefined,
+                siteName: typeof parsed.siteName === "string" ? parsed.siteName : undefined,
+              };
+            }
+          } catch {
+            // Ignore malformed or undecryptable preview payload.
+          }
         }
         
         // Map reactions
@@ -285,16 +328,17 @@ export default function CometChatRoom({ roomId, displayName, encryptionKey, part
           createdAt: msg._creationTime,
           isMe: msg.senderName === displayName,
           isRead: msg.isRead,
-          type: normalizedType as 'text' | 'system' | 'image' | 'file' | 'audio',
+          type: normalizedType as 'text' | 'system' | 'image' | 'video' | 'file' | 'audio',
           reactions,
           storageId: (msg as any).fileUrl || (msg as any).storageId,
           fileName: (msg as any).fileName || (normalizedType !== "text" && normalizedType !== "system" ? content : undefined),
-          fileSize: undefined,
-          mimeType: undefined,
+          fileSize: (msg as any).fileSize,
+          mimeType: (msg as any).mimeType,
           isEncryptedFile: true,
           replyTo: (msg as any).replyTo ? String((msg as any).replyTo) : undefined,
           replyToMessage: undefined,
           replyToPreview,
+          linkPreview,
         };
       });
       
@@ -335,9 +379,13 @@ export default function CometChatRoom({ roomId, displayName, encryptionKey, part
       });
     } catch (error) {
       sentReadIdsRef.current.delete(messageKey);
+      if (isSessionInvalidError(error)) {
+        invalidateRoomSession("Room session expired. Please rejoin.");
+        return;
+      }
       console.debug("Mark read skipped:", error);
     }
-  }, [markReadMutation, participantId, participantToken]);
+  }, [markReadMutation, participantId, participantToken, isSessionInvalidError, invalidateRoomSession]);
 
   useEffect(() => {
     visibleMessages.forEach(msg => {
@@ -366,12 +414,10 @@ export default function CometChatRoom({ roomId, displayName, encryptionKey, part
     participantMissingSinceRef.current = Date.now();
     const timeoutId = window.setTimeout(() => {
       if (participantMissingSinceRef.current === null) return;
-      toast.error("You have been removed by the admin.");
-      localStorage.removeItem(`room_session_${roomId}`);
-      navigate("/");
+      invalidateRoomSession("You have been removed by the admin.");
     }, 4000);
     return () => window.clearTimeout(timeoutId);
-  }, [participants, participantId, navigate, roomId]);
+  }, [participants, participantId, invalidateRoomSession]);
 
   // Room Existence Check
   useEffect(() => {
@@ -382,12 +428,10 @@ export default function CometChatRoom({ roomId, displayName, encryptionKey, part
     roomMissingSinceRef.current = Date.now();
     const timeoutId = window.setTimeout(() => {
       if (roomMissingSinceRef.current === null) return;
-      toast.error("Room has been destroyed.");
-      localStorage.removeItem(`room_session_${roomId}`);
-      navigate("/");
+      invalidateRoomSession("Room expired or was destroyed.");
     }, 3000);
     return () => window.clearTimeout(timeoutId);
-  }, [room, navigate, roomId]);
+  }, [room, invalidateRoomSession]);
 
   // Activity heartbeat
   useEffect(() => {
@@ -396,19 +440,27 @@ export default function CometChatRoom({ roomId, displayName, encryptionKey, part
         roomId,
         participantId: participantId as any,
         participantToken,
-      }).catch(() => {});
+      }).catch((error) => {
+        if (isSessionInvalidError(error)) {
+          invalidateRoomSession("Room session expired. Please rejoin.");
+        }
+      });
     }, 30000);
     return () => clearInterval(interval);
-  }, [roomId, participantId, participantToken, updateActivityMutation]);
+  }, [roomId, participantId, participantToken, updateActivityMutation, isSessionInvalidError, invalidateRoomSession]);
 
   const generateUploadUrlMutation = useMutation((api as any).messages.generateUploadUrl);
 
   // Handlers
-  const handleSendMessage = async (content: string, type: 'text' | 'image' | 'file' | 'audio', file?: File) => {
+  const handleSendMessage = async (content: string, type: 'text' | 'image' | 'video' | 'file' | 'audio', file?: File) => {
     if (!encryptionKey) return;
+    if (file?.size && file.size > MAX_ATTACHMENT_BYTES) {
+      toast.error("File is too large. Maximum upload size is 100 MB.");
+      return;
+    }
     const pendingId = `pending-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     const pendingBlobUrl =
-      file && (type === "image" || type === "file")
+      file && (type === "image" || type === "video" || type === "file")
         ? URL.createObjectURL(file)
         : undefined;
 
@@ -444,6 +496,7 @@ export default function CometChatRoom({ roomId, displayName, encryptionKey, part
     try {
       let storageId: string | undefined;
       let encryptedContent = content;
+      let linkPreviewEncrypted: string | undefined;
 
       if (type !== 'text' && file) {
         // ... (existing upload logic)
@@ -474,6 +527,32 @@ export default function CometChatRoom({ roomId, displayName, encryptionKey, part
         encryptedContent = await ChatCrypto.encrypt(content || file.name, encryptionKey);
       } else {
         encryptedContent = await ChatCrypto.encrypt(content, encryptionKey);
+        const firstUrl = room?.settings?.linkPreviewsEnabled === false ? null : firstUrlFromText(content);
+        if (firstUrl) {
+          try {
+            const unfurlResult = await unfurlUrlAction({
+              roomId,
+              participantId: participantId as any,
+              participantToken,
+              url: firstUrl,
+            });
+            const preview = (unfurlResult as any)?.preview;
+            if (preview && typeof preview.canonicalUrl === "string") {
+              linkPreviewEncrypted = await ChatCrypto.encrypt(
+                JSON.stringify({
+                  canonicalUrl: preview.canonicalUrl,
+                  title: preview.title,
+                  description: preview.description,
+                  image: preview.image,
+                  siteName: preview.siteName,
+                }),
+                encryptionKey
+              );
+            }
+          } catch (previewError) {
+            console.warn("Link preview unfurl failed:", previewError);
+          }
+        }
       }
 
       await sendMessageMutation({
@@ -485,6 +564,10 @@ export default function CometChatRoom({ roomId, displayName, encryptionKey, part
         participantToken,
         messageType: type,
         storageId,
+        fileName: file?.name,
+        fileSize: file?.size,
+        mimeType: file?.type,
+        linkPreviewEncrypted,
         replyTo: replyTo?._id,
       });
       removePendingMessage(pendingId);
@@ -501,6 +584,10 @@ export default function CometChatRoom({ roomId, displayName, encryptionKey, part
     } catch (error) {
       removePendingMessage(pendingId);
       console.error(error);
+      if (isSessionInvalidError(error)) {
+        invalidateRoomSession("Room session expired. Please rejoin.");
+        return;
+      }
       toast.error("Failed to send");
     }
   };
@@ -515,7 +602,11 @@ export default function CometChatRoom({ roomId, displayName, encryptionKey, part
         participantToken,
       });
       toast.success("Edited");
-    } catch {
+    } catch (error) {
+      if (isSessionInvalidError(error)) {
+        invalidateRoomSession("Room session expired. Please rejoin.");
+        return;
+      }
       toast.error("Failed to edit");
     }
   };
@@ -529,7 +620,11 @@ export default function CometChatRoom({ roomId, displayName, encryptionKey, part
         participantToken,
       });
       toast.success("Message deleted");
-    } catch {
+    } catch (error) {
+      if (isSessionInvalidError(error)) {
+        invalidateRoomSession("Room session expired. Please rejoin.");
+        return;
+      }
       toast.error("Failed to delete message");
     }
   };
@@ -543,8 +638,12 @@ export default function CometChatRoom({ roomId, displayName, encryptionKey, part
       participantId: participantId as any,
       participantToken,
       isTyping: typing,
-    }).catch(() => {});
-  }, [roomId, participantId, participantToken, setTypingMutation]);
+    }).catch((error) => {
+      if (isSessionInvalidError(error)) {
+        invalidateRoomSession("Room session expired. Please rejoin.");
+      }
+    });
+  }, [roomId, participantId, participantToken, setTypingMutation, isSessionInvalidError, invalidateRoomSession]);
 
   const handleReaction = useCallback(async (messageId: string, emoji: string) => {
     if (!messageId || messageId.startsWith("pending-")) return;
@@ -569,9 +668,13 @@ export default function CometChatRoom({ roomId, displayName, encryptionKey, part
         // Do not locally delete messages on reaction race conditions.
         return;
       }
+      if (isSessionInvalidError(error)) {
+        invalidateRoomSession("Room session expired. Please rejoin.");
+        return;
+      }
       toast.error("Failed to react");
     }
-  }, [displayedMessages, participantId, participantToken, toggleReactionMutation]);
+  }, [displayedMessages, participantId, participantToken, toggleReactionMutation, isSessionInvalidError, invalidateRoomSession]);
 
   const handleLeaveRoom = async () => {
     try {
@@ -582,7 +685,11 @@ export default function CometChatRoom({ roomId, displayName, encryptionKey, part
       });
       localStorage.removeItem(`room_session_${roomId}`);
       navigate("/");
-    } catch {
+    } catch (error) {
+      if (isSessionInvalidError(error)) {
+        invalidateRoomSession("Room session expired. Please rejoin.");
+        return;
+      }
       toast.error("Failed to leave");
     }
   };
@@ -607,8 +714,12 @@ export default function CometChatRoom({ roomId, displayName, encryptionKey, part
         callerParticipantToken: participantToken,
       });
       toast.success("Member removed");
-    } catch (e: any) {
-      toast.error(e?.message || "Failed to remove member");
+    } catch (error: any) {
+      if (isSessionInvalidError(error)) {
+        invalidateRoomSession("Room session expired. Please rejoin.");
+        return;
+      }
+      toast.error(error?.message || "Failed to remove member");
     }
   };
 
@@ -623,8 +734,29 @@ export default function CometChatRoom({ roomId, displayName, encryptionKey, part
       });
       localStorage.removeItem(`room_session_${roomId}`);
       navigate("/");
-    } catch {
+    } catch (error) {
+      if (isSessionInvalidError(error)) {
+        invalidateRoomSession("Room session expired. Please rejoin.");
+        return;
+      }
       toast.error("Failed to panic");
+    }
+  };
+
+  const handleClearChat = async () => {
+    try {
+      await clearParticipantsMutation({
+        roomId,
+        callerParticipantId: participantId as any,
+        callerParticipantToken: participantToken,
+        panic: false,
+      });
+    } catch (error) {
+      if (isSessionInvalidError(error)) {
+        invalidateRoomSession("Room session expired. Please rejoin.");
+        return;
+      }
+      toast.error("Failed to clear room members");
     }
   };
 
@@ -678,7 +810,7 @@ export default function CometChatRoom({ roomId, displayName, encryptionKey, part
   if (room === null) return <div className="flex h-screen items-center justify-center">Room Not Found</div>;
 
   return (
-    <>
+    <ScreenShield watermarkText={`${roomId} • ${displayName}`} className="h-screen w-full">
       <CometChatLayout
         showSidebarMobile={isSidebarMobileOpen}
         onToggleSidebar={() => setIsSidebarMobileOpen(!isSidebarMobileOpen)}
@@ -718,17 +850,11 @@ export default function CometChatRoom({ roomId, displayName, encryptionKey, part
           onLeaveRoom={handleLeaveRoom}
           onDeleteRoom={handlePanicMode}
           onCopyInvite={handleCopyInvite}
-          onClearChat={() => {
-            clearParticipantsMutation({
-              roomId,
-              callerParticipantId: participantId as any,
-              callerParticipantToken: participantToken,
-              panic: false,
-            });
-          }}
+          onClearChat={handleClearChat}
         />
 
         <CometChatMessageList
+          roomId={roomId}
           messages={displayedMessages}
           onReact={handleReaction}
           onEdit={handleEditMessage}
@@ -783,6 +909,6 @@ export default function CometChatRoom({ roomId, displayName, encryptionKey, part
           setDismissedCallIds(prev => new Set(prev).add(currentActiveCall._id));
         }}
       />
-    </>
+    </ScreenShield>
   );
 }

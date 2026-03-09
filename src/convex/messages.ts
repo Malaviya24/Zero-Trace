@@ -1,15 +1,36 @@
-import { v } from "convex/values";
-import { mutation, query } from "./_generated/server";
+﻿import { v } from "convex/values";
+import { action, mutation, query } from "./_generated/server";
 import type { Id } from "./_generated/dataModel";
 import { computeReadPatch } from "../lib/message-conflict-utils";
 import { requireRoomParticipantSession, verifyRoomParticipantSession } from "./sessionAuth";
+import { api } from "./_generated/api";
+import { getRoomByRoomId, hardDeleteRoomData, isRoomExpiredOrInactive } from "./roomLifecycle";
 
-const HEART_VARIANTS = new Set(["❤", "❤️"]);
-const ALLOWED_REACTIONS = new Set(["👍", "❤️", "😂", "😮", "😢", "🙏"]);
+const HEART_VARIANTS = new Set(["\u2764", "\u2764\uFE0F"]);
+const ALLOWED_REACTIONS = new Set([
+  "\u{1F44D}", // 👍
+  "\u2764\uFE0F", // ❤️
+  "\u{1F602}", // 😂
+  "\u{1F62E}", // 😮
+  "\u{1F622}", // 😢
+  "\u{1F64F}", // 🙏
+]);
+const MAX_ATTACHMENT_BYTES = 100 * 1024 * 1024;
+const LINK_PREVIEW_CACHE_TTL_MS = 6 * 60 * 60 * 1000;
+const UNFURL_TIMEOUT_MS = 5_000;
+const MAX_UNFURL_BYTES = 250_000;
+
+type LinkPreview = {
+  title?: string;
+  description?: string;
+  image?: string;
+  siteName?: string;
+  canonicalUrl: string;
+};
 
 function normalizeReactionEmoji(value: string) {
   const emoji = value.trim();
-  if (HEART_VARIANTS.has(emoji)) return "❤️";
+  if (HEART_VARIANTS.has(emoji)) return "\u2764\uFE0F";
   return emoji;
 }
 
@@ -21,17 +42,348 @@ function handleConvexError(scope: string, e: unknown): never {
   throw new Error("Unexpected server error.");
 }
 
-async function requireActiveRoom(ctx: any, roomId: string) {
-  const room = await ctx.db
-    .query("rooms")
-    .withIndex("by_room_id", (q: any) => q.eq("roomId", roomId))
-    .filter((q: any) => q.eq(q.field("isActive"), true))
-    .first();
-  if (!room || room.expiresAt < Date.now()) {
+function sanitizeText(value: string | undefined, maxLength: number) {
+  if (!value) return undefined;
+  const normalized = value.replace(/\s+/g, " ").trim();
+  if (!normalized) return undefined;
+  return normalized.slice(0, maxLength);
+}
+
+function isPrivateHost(hostname: string) {
+  const host = hostname.toLowerCase().replace(/^\[|\]$/g, "");
+  if (host === "localhost" || host.endsWith(".local")) return true;
+
+  if (/^\d{1,3}(\.\d{1,3}){3}$/.test(host)) {
+    const parts = host.split(".").map((part) => Number(part));
+    if (parts.some((part) => Number.isNaN(part) || part < 0 || part > 255)) return true;
+    if (parts[0] === 10) return true;
+    if (parts[0] === 127) return true;
+    if (parts[0] === 0) return true;
+    if (parts[0] === 169 && parts[1] === 254) return true;
+    if (parts[0] === 172 && parts[1] >= 16 && parts[1] <= 31) return true;
+    if (parts[0] === 192 && parts[1] === 168) return true;
+    return false;
+  }
+
+  if (host.includes(":")) {
+    if (host === "::1") return true;
+    if (host.startsWith("fc") || host.startsWith("fd")) return true;
+    if (host.startsWith("fe80")) return true;
+  }
+
+  return false;
+}
+
+function normalizePreviewUrl(rawUrl: string): string | null {
+  const trimmed = rawUrl.trim();
+  if (!trimmed) return null;
+  const withProtocol = /^www\./i.test(trimmed) ? `https://${trimmed}` : trimmed;
+
+  let parsed: URL;
+  try {
+    parsed = new URL(withProtocol);
+  } catch {
+    return null;
+  }
+
+  if (!["http:", "https:"].includes(parsed.protocol)) return null;
+  if (isPrivateHost(parsed.hostname)) return null;
+  parsed.hash = "";
+  return parsed.toString();
+}
+
+function extractMetaTagContent(html: string, keys: string[]) {
+  const keySet = new Set(keys);
+  const metaMatches = html.matchAll(/<meta\s+[^>]*>/gi);
+  for (const match of metaMatches) {
+    const tag = match[0];
+    const attributes = new Map<string, string>();
+    for (const attribute of tag.matchAll(/([a-zA-Z:-]+)\s*=\s*["']([^"']*)["']/g)) {
+      attributes.set(attribute[1].toLowerCase(), attribute[2]);
+    }
+    const prop = attributes.get("property")?.toLowerCase();
+    const name = attributes.get("name")?.toLowerCase();
+    if (!prop && !name) continue;
+    if (!keySet.has(prop || "") && !keySet.has(name || "")) continue;
+    const content = attributes.get("content");
+    if (content) return content;
+  }
+  return undefined;
+}
+
+function resolveUrl(maybeUrl: string | undefined, baseUrl: string) {
+  if (!maybeUrl) return undefined;
+  try {
+    const resolved = new URL(maybeUrl, baseUrl);
+    if (!["http:", "https:"].includes(resolved.protocol)) return undefined;
+    if (isPrivateHost(resolved.hostname)) return undefined;
+    return resolved.toString();
+  } catch {
+    return undefined;
+  }
+}
+
+function parseLinkPreview(html: string, baseUrl: string): LinkPreview {
+  const headChunk = html.slice(0, 80_000);
+  const titleTag = headChunk.match(/<title[^>]*>([\s\S]*?)<\/title>/i)?.[1];
+  const ogTitle = extractMetaTagContent(headChunk, ["og:title", "twitter:title"]);
+  const ogDescription = extractMetaTagContent(headChunk, ["og:description", "twitter:description", "description"]);
+  const ogImage = extractMetaTagContent(headChunk, ["og:image", "twitter:image"]);
+  const ogSiteName = extractMetaTagContent(headChunk, ["og:site_name"]);
+  const canonical = extractMetaTagContent(headChunk, ["og:url"]) ?? baseUrl;
+
+  return {
+    title: sanitizeText(ogTitle ?? titleTag, 120),
+    description: sanitizeText(ogDescription, 280),
+    image: resolveUrl(ogImage, baseUrl),
+    siteName: sanitizeText(ogSiteName, 80),
+    canonicalUrl: resolveUrl(canonical, baseUrl) ?? baseUrl,
+  };
+}
+
+async function fetchLinkPreview(url: string): Promise<LinkPreview | null> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), UNFURL_TIMEOUT_MS);
+  try {
+    const response = await fetch(url, {
+      method: "GET",
+      redirect: "follow",
+      signal: controller.signal,
+      headers: {
+        "user-agent": "ZeroTrace-LinkPreview/1.0",
+      },
+    });
+    if (!response.ok) return null;
+
+    const finalUrl = normalizePreviewUrl(response.url || url);
+    if (!finalUrl) return null;
+
+    const contentType = (response.headers.get("content-type") || "").toLowerCase();
+    const contentLength = Number(response.headers.get("content-length") || "0");
+    if (contentLength > MAX_UNFURL_BYTES) return null;
+
+    if (!contentType.includes("text/html")) {
+      const finalParsed = new URL(finalUrl);
+      return {
+        title: finalParsed.hostname,
+        canonicalUrl: finalUrl,
+      };
+    }
+
+    let html = "";
+    const reader = response.body?.getReader();
+    if (reader) {
+      const decoder = new TextDecoder();
+      let totalBytes = 0;
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        if (!value) continue;
+        totalBytes += value.byteLength;
+        if (totalBytes > MAX_UNFURL_BYTES) break;
+        html += decoder.decode(value, { stream: true });
+      }
+      html += decoder.decode();
+    } else {
+      html = (await response.text()).slice(0, MAX_UNFURL_BYTES);
+    }
+
+    const preview = parseLinkPreview(html, finalUrl);
+    if (!preview.title && !preview.description && !preview.image) {
+      const parsed = new URL(finalUrl);
+      return {
+        title: parsed.hostname,
+        canonicalUrl: finalUrl,
+      };
+    }
+    return preview;
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+async function requireActiveRoom(
+  ctx: any,
+  roomId: string,
+  options: {
+    purgeIfExpired?: boolean;
+  } = {}
+) {
+  const room = await getRoomByRoomId(ctx, roomId);
+  if (!room) {
     throw new Error("Room not found or expired");
   }
+
+  if (isRoomExpiredOrInactive(room)) {
+    if (options.purgeIfExpired) {
+      await hardDeleteRoomData(ctx, roomId);
+    }
+    throw new Error("Room not found or expired");
+  }
+
   return room;
 }
+
+export const getUnfurlContext = query({
+  args: {
+    roomId: v.string(),
+    participantId: v.id("participants"),
+    participantToken: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const participant = await verifyRoomParticipantSession(ctx, {
+      roomId: args.roomId,
+      participantId: args.participantId,
+      participantToken: args.participantToken,
+    });
+    if (!participant) return { authorized: false, linkPreviewsEnabled: false };
+
+    const room = await getRoomByRoomId(ctx, args.roomId);
+    if (!room || isRoomExpiredOrInactive(room)) return { authorized: false, linkPreviewsEnabled: false };
+    return {
+      authorized: true,
+      linkPreviewsEnabled: room.settings?.linkPreviewsEnabled ?? true,
+    };
+  },
+});
+
+export const getLinkPreviewCache = query({
+  args: {
+    roomId: v.string(),
+    participantId: v.id("participants"),
+    participantToken: v.string(),
+    url: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const participant = await verifyRoomParticipantSession(ctx, {
+      roomId: args.roomId,
+      participantId: args.participantId,
+      participantToken: args.participantToken,
+    });
+    if (!participant) return null;
+
+    const normalizedUrl = normalizePreviewUrl(args.url);
+    if (!normalizedUrl) return null;
+
+    const existing = await ctx.db
+      .query("linkPreviewCache")
+      .withIndex("by_room_and_url", (q) => q.eq("roomId", args.roomId).eq("url", normalizedUrl))
+      .first();
+
+    if (!existing || existing.expiresAt <= Date.now()) return null;
+    return {
+      title: existing.title,
+      description: existing.description,
+      image: existing.image,
+      siteName: existing.siteName,
+      canonicalUrl: existing.canonicalUrl,
+    } as LinkPreview;
+  },
+});
+
+export const storeLinkPreviewCache = mutation({
+  args: {
+    roomId: v.string(),
+    participantId: v.id("participants"),
+    participantToken: v.string(),
+    url: v.string(),
+    title: v.optional(v.string()),
+    description: v.optional(v.string()),
+    image: v.optional(v.string()),
+    siteName: v.optional(v.string()),
+    canonicalUrl: v.string(),
+  },
+  handler: async (ctx, args) => {
+    await requireRoomParticipantSession(ctx, {
+      roomId: args.roomId,
+      participantId: args.participantId,
+      participantToken: args.participantToken,
+    });
+
+    const normalizedUrl = normalizePreviewUrl(args.url);
+    const canonicalUrl = normalizePreviewUrl(args.canonicalUrl);
+    if (!normalizedUrl || !canonicalUrl) return;
+
+    const now = Date.now();
+    const payload = {
+      roomId: args.roomId,
+      url: normalizedUrl,
+      title: sanitizeText(args.title, 120),
+      description: sanitizeText(args.description, 280),
+      image: resolveUrl(args.image, canonicalUrl),
+      siteName: sanitizeText(args.siteName, 80),
+      canonicalUrl,
+      fetchedAt: now,
+      expiresAt: now + LINK_PREVIEW_CACHE_TTL_MS,
+    };
+
+    const existing = await ctx.db
+      .query("linkPreviewCache")
+      .withIndex("by_room_and_url", (q) => q.eq("roomId", args.roomId).eq("url", normalizedUrl))
+      .first();
+
+    if (existing) {
+      await ctx.db.patch(existing._id, payload);
+      return;
+    }
+
+    await ctx.db.insert("linkPreviewCache", payload);
+  },
+});
+
+export const unfurlUrl: any = action({
+  args: {
+    roomId: v.string(),
+    participantId: v.id("participants"),
+    participantToken: v.string(),
+    url: v.string(),
+  },
+  handler: async (
+    ctx,
+    args
+  ): Promise<{ ignored: true } | { ignored: false; preview: LinkPreview }> => {
+    const normalizedUrl = normalizePreviewUrl(args.url);
+    if (!normalizedUrl) return { ignored: true as const };
+
+    const context = await ctx.runQuery((api as any).messages.getUnfurlContext, {
+      roomId: args.roomId,
+      participantId: args.participantId,
+      participantToken: args.participantToken,
+    });
+    if (!context?.authorized || !context.linkPreviewsEnabled) {
+      return { ignored: true as const };
+    }
+
+    const cached: LinkPreview | null = await ctx.runQuery((api as any).messages.getLinkPreviewCache, {
+      roomId: args.roomId,
+      participantId: args.participantId,
+      participantToken: args.participantToken,
+      url: normalizedUrl,
+    });
+    if (cached) {
+      return { ignored: false as const, preview: cached as LinkPreview };
+    }
+
+    const preview = await fetchLinkPreview(normalizedUrl);
+    if (!preview) return { ignored: true as const };
+
+    await ctx.runMutation((api as any).messages.storeLinkPreviewCache, {
+      roomId: args.roomId,
+      participantId: args.participantId,
+      participantToken: args.participantToken,
+      url: normalizedUrl,
+      title: preview.title,
+      description: preview.description,
+      image: preview.image,
+      siteName: preview.siteName,
+      canonicalUrl: preview.canonicalUrl,
+    });
+
+    return { ignored: false as const, preview };
+  },
+});
 
 export const sendMessage = mutation({
   args: {
@@ -41,12 +393,15 @@ export const sendMessage = mutation({
     selfDestruct: v.optional(v.boolean()),
     participantId: v.id("participants"),
     participantToken: v.string(),
-    messageType: v.optional(v.union(v.literal("text"), v.literal("image"), v.literal("file"), v.literal("audio"))),
+    messageType: v.optional(
+      v.union(v.literal("text"), v.literal("image"), v.literal("video"), v.literal("file"), v.literal("audio"))
+    ),
     storageId: v.optional(v.string()),
     fileName: v.optional(v.string()),
     fileSize: v.optional(v.number()),
     mimeType: v.optional(v.string()),
     replyTo: v.optional(v.string()),
+    linkPreviewEncrypted: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     try {
@@ -56,18 +411,26 @@ export const sendMessage = mutation({
         participantToken: args.participantToken,
       });
 
+      const messageType = args.messageType || "text";
       const body = args.content?.trim() ?? "";
-      if (!body && !args.storageId) {
+
+      if (messageType === "text" && !body) {
         throw new Error("Message content cannot be empty.");
       }
-      if (body.length > 2000) {
-        throw new Error("Message is too long (max 2000 characters).");
+      if (messageType !== "text" && !args.storageId) {
+        throw new Error("Attachment upload reference is missing.");
+      }
+      if (body.length > 10_000) {
+        throw new Error("Message is too long.");
+      }
+      if (typeof args.fileSize === "number" && args.fileSize > MAX_ATTACHMENT_BYTES) {
+        throw new Error("File is too large. Maximum size is 100 MB.");
       }
       if (!args.encryptionKeyId.trim()) {
         throw new Error("Missing encryption key reference.");
       }
 
-      const room = await requireActiveRoom(ctx, args.roomId);
+      const room = await requireActiveRoom(ctx, args.roomId, { purgeIfExpired: true });
 
       const now = Date.now();
       const expiresAt = Math.min(room.expiresAt, now + 2 * 60 * 60 * 1000);
@@ -78,7 +441,7 @@ export const sendMessage = mutation({
         | {
             senderName: string;
             content: string;
-            type: "text" | "image" | "file" | "audio" | "system";
+            type: "text" | "image" | "video" | "file" | "audio" | "system";
           }
         | undefined;
 
@@ -113,7 +476,7 @@ export const sendMessage = mutation({
         senderName: participant.displayName,
         senderAvatar: participant.avatar,
         content: body,
-        messageType: args.messageType || "text",
+        messageType,
         storageId: args.storageId,
         fileName: args.fileName,
         fileSize: args.fileSize,
@@ -122,6 +485,7 @@ export const sendMessage = mutation({
         selfDestructAt,
         expiresAt,
         encryptionKeyId: args.encryptionKeyId,
+        linkPreviewEncrypted: messageType === "text" ? args.linkPreviewEncrypted?.trim() : undefined,
         replyTo: resolvedReplyTo,
         replyToPreview: resolvedReplyToPreview,
       });
@@ -143,7 +507,7 @@ export const generateUploadUrl = mutation({
   },
   handler: async (ctx, args) => {
     try {
-      await requireActiveRoom(ctx, args.roomId);
+      await requireActiveRoom(ctx, args.roomId, { purgeIfExpired: true });
       await requireRoomParticipantSession(ctx, {
         roomId: args.roomId,
         participantId: args.participantId,
@@ -290,8 +654,8 @@ export const editMessage = mutation({
       if (!body) {
         throw new Error("Message content cannot be empty.");
       }
-      if (body.length > 2000) {
-        throw new Error("Message is too long (max 2000 characters).");
+      if (body.length > 10_000) {
+        throw new Error("Message is too long.");
       }
 
       const message = await ctx.db.get(args.messageId);
@@ -411,13 +775,24 @@ export const deleteMessage = mutation({
         participantToken: args.participantToken,
       });
 
-      if (message.senderParticipantId && message.senderParticipantId === participant._id) {
+      const deleteMessageWithAttachment = async () => {
+        if (message.storageId) {
+          try {
+            await ctx.storage.delete(message.storageId as Id<"_storage">);
+          } catch {
+            // Ignore missing attachment blobs.
+          }
+        }
         await ctx.db.delete(args.messageId);
+      };
+
+      if (message.senderParticipantId && message.senderParticipantId === participant._id) {
+        await deleteMessageWithAttachment();
         return;
       }
 
       if (!message.senderParticipantId && message.senderName === participant.displayName) {
-        await ctx.db.delete(args.messageId);
+        await deleteMessageWithAttachment();
       }
     } catch (e) {
       handleConvexError("messages.deleteMessage", e);
@@ -458,6 +833,13 @@ export const clearRoomMessages = mutation({
         .collect();
 
       for (const message of messages) {
+        if (message.storageId) {
+          try {
+            await ctx.storage.delete(message.storageId as Id<"_storage">);
+          } catch {
+            // Ignore missing attachment blobs.
+          }
+        }
         await ctx.db.delete(message._id);
       }
     } catch (e) {
@@ -465,3 +847,4 @@ export const clearRoomMessages = mutation({
     }
   },
 });
+

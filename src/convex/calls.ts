@@ -1,6 +1,7 @@
 import { v } from "convex/values";
 import { mutation, query } from "./_generated/server";
 import { requireCallParticipantSession, requireRoomParticipantSession, verifyRoomParticipantSession } from "./sessionAuth";
+import { getRoomByRoomId, hardDeleteRoomData, isRoomExpiredOrInactive } from "./roomLifecycle";
 
 const generateLeaveToken = () => {
   const first = globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(36).slice(2)}`;
@@ -33,13 +34,12 @@ export const create = mutation({
       participantToken: args.roomParticipantToken,
     });
 
-    const room = await ctx.db
-      .query("rooms")
-      .withIndex("by_room_id", (q) => q.eq("roomId", args.roomId))
-      .filter((q) => q.eq(q.field("isActive"), true))
-      .first();
-
-    if (!room || room.expiresAt < Date.now()) {
+    const room = await getRoomByRoomId(ctx, args.roomId);
+    if (!room) {
+      throw new Error("Room not found or expired");
+    }
+    if (isRoomExpiredOrInactive(room)) {
+      await hardDeleteRoomData(ctx, args.roomId);
       throw new Error("Room not found or expired");
     }
 

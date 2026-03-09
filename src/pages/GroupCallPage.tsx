@@ -21,6 +21,7 @@ import { applyHoldToStream, buildTransferUrl } from "@/lib/call-ui-utils";
 import { useAudioOutputDevice } from "@/hooks/useAudioOutputDevice";
 import { clearCallReturnPath, resolveCallReturnPath } from "@/lib/call-navigation";
 import { ChatCrypto } from "@/lib/crypto";
+import { ScreenShield } from "@/components/security/ScreenShield";
 import {
   decryptCallSignalPayload,
   encryptCallSignalPayload,
@@ -1561,5 +1562,11 @@ function GroupCallPageContent() {
 }
 
 export default function GroupCallPage() {
-  return <GroupCallPageContent />;
+  const { callId } = useParams<{ callId: string }>();
+  const watermark = callId ? `Call • ${callId}` : "Call • Protected";
+  return (
+    <ScreenShield watermarkText={watermark} className="h-screen w-screen">
+      <GroupCallPageContent />
+    </ScreenShield>
+  );
 }
