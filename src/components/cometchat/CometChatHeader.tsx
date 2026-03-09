@@ -35,7 +35,7 @@ interface CometChatHeaderProps {
   onToggleSidebar?: () => void;
   // Admin actions
   isAdmin?: boolean;
-  onClearChat?: () => void;
+  onClearMembers?: () => void;
   onDeleteRoom?: () => void;
   onLeaveRoom?: () => void;
   onCopyInvite?: () => void;
@@ -50,7 +50,7 @@ export function CometChatHeader({
   onSearch,
   onToggleSidebar,
   isAdmin,
-  onClearChat,
+  onClearMembers,
   onDeleteRoom,
   onLeaveRoom,
   onCopyInvite
@@ -186,7 +186,7 @@ export function CometChatHeader({
               <>
                 <DropdownMenuSeparator />
                 <DropdownMenuLabel className="text-red-500">Admin Zone</DropdownMenuLabel>
-                <DropdownMenuItem onClick={onClearChat} className="text-red-500 focus:text-red-500">
+                <DropdownMenuItem onClick={onClearMembers} className="text-red-500 focus:text-red-500">
                   <Trash2 className="mr-2 h-4 w-4" /> Clear Members
                 </DropdownMenuItem>
                 <DropdownMenuItem onClick={onDeleteRoom} className="text-red-500 focus:text-red-500">

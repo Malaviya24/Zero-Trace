@@ -69,6 +69,8 @@ interface ChatRoomProps {
 
 const MESSAGE_CACHE_TTL_MS = 5 * 60 * 1000;
 const MAX_ATTACHMENT_BYTES = 100 * 1024 * 1024;
+const PARTICIPANT_MISSING_CONFIRM_MS = 4500;
+const ROOM_MISSING_CONFIRM_MS = 3500;
 const isMessageActive = (message: Message, now = Date.now()) =>
   (!message.expiresAt || message.expiresAt > now) &&
   (!message.selfDestructAt || message.selfDestructAt > now);
@@ -171,6 +173,23 @@ export default function CometChatRoom({ roomId, displayName, encryptionKey, part
     if (reason) toast.error(reason);
     navigate(`/join/${roomId}`);
   }, [navigate, roomId]);
+
+  const confirmSessionStillValid = useCallback(async () => {
+    try {
+      await updateActivityMutation({
+        roomId,
+        participantId: participantId as any,
+        participantToken,
+      });
+      return true;
+    } catch (error) {
+      if (isSessionInvalidError(error)) {
+        return false;
+      }
+      // Treat transient network/backend errors as recoverable.
+      return true;
+    }
+  }, [isSessionInvalidError, participantId, participantToken, roomId, updateActivityMutation]);
 
   const removePendingMessage = useCallback((pendingId: string) => {
     setPendingMessages((prev) => {
@@ -405,33 +424,64 @@ export default function CometChatRoom({ roomId, displayName, encryptionKey, part
 
   // Participant Presence Check
   useEffect(() => {
-    if (!participants || !participantId) return;
+    if (participants === undefined || !participantId) return;
     const meStillPresent = (participants as any[]).some((p: any) => p._id === (participantId as any));
     if (meStillPresent) {
       participantMissingSinceRef.current = null;
       return;
     }
-    participantMissingSinceRef.current = Date.now();
+    if (participantMissingSinceRef.current === null) {
+      participantMissingSinceRef.current = Date.now();
+    }
+
+    const missingSince = participantMissingSinceRef.current;
+    const elapsed = Date.now() - missingSince;
+    const remainingMs = Math.max(0, PARTICIPANT_MISSING_CONFIRM_MS - elapsed);
+
     const timeoutId = window.setTimeout(() => {
-      if (participantMissingSinceRef.current === null) return;
-      invalidateRoomSession("You have been removed by the admin.");
-    }, 4000);
+      void (async () => {
+        if (participantMissingSinceRef.current !== missingSince || sessionInvalidatedRef.current) return;
+        const stillValid = await confirmSessionStillValid();
+        if (!stillValid) {
+          invalidateRoomSession("You have been removed by the admin.");
+          return;
+        }
+        participantMissingSinceRef.current = null;
+      })();
+    }, remainingMs);
+
     return () => window.clearTimeout(timeoutId);
-  }, [participants, participantId, invalidateRoomSession]);
+  }, [participants, participantId, confirmSessionStillValid, invalidateRoomSession]);
 
   // Room Existence Check
   useEffect(() => {
+    if (room === undefined) return;
     if (room !== null) {
       roomMissingSinceRef.current = null;
       return;
     }
-    roomMissingSinceRef.current = Date.now();
+    if (roomMissingSinceRef.current === null) {
+      roomMissingSinceRef.current = Date.now();
+    }
+
+    const missingSince = roomMissingSinceRef.current;
+    const elapsed = Date.now() - missingSince;
+    const remainingMs = Math.max(0, ROOM_MISSING_CONFIRM_MS - elapsed);
+
     const timeoutId = window.setTimeout(() => {
-      if (roomMissingSinceRef.current === null) return;
-      invalidateRoomSession("Room expired or was destroyed.");
-    }, 3000);
+      void (async () => {
+        if (roomMissingSinceRef.current !== missingSince || sessionInvalidatedRef.current) return;
+        const stillValid = await confirmSessionStillValid();
+        if (!stillValid) {
+          invalidateRoomSession("Room expired or was destroyed.");
+          return;
+        }
+        roomMissingSinceRef.current = null;
+      })();
+    }, remainingMs);
+
     return () => window.clearTimeout(timeoutId);
-  }, [room, invalidateRoomSession]);
+  }, [room, confirmSessionStillValid, invalidateRoomSession]);
 
   // Activity heartbeat
   useEffect(() => {
@@ -743,7 +793,7 @@ export default function CometChatRoom({ roomId, displayName, encryptionKey, part
     }
   };
 
-  const handleClearChat = async () => {
+  const handleClearMembers = async () => {
     try {
       await clearParticipantsMutation({
         roomId,
@@ -807,7 +857,14 @@ export default function CometChatRoom({ roomId, displayName, encryptionKey, part
   }));
 
   if (room === undefined) return <div className="flex h-screen items-center justify-center"><Loader2 className="animate-spin" /></div>;
-  if (room === null) return <div className="flex h-screen items-center justify-center">Room Not Found</div>;
+  if (room === null) {
+    return (
+      <div className="flex h-screen items-center justify-center gap-2 text-sm text-muted-foreground">
+        <Loader2 className="h-4 w-4 animate-spin" />
+        Verifying room state...
+      </div>
+    );
+  }
 
   return (
     <ScreenShield watermarkText={`${roomId} • ${displayName}`} className="h-screen w-full">
@@ -850,7 +907,7 @@ export default function CometChatRoom({ roomId, displayName, encryptionKey, part
           onLeaveRoom={handleLeaveRoom}
           onDeleteRoom={handlePanicMode}
           onCopyInvite={handleCopyInvite}
-          onClearChat={handleClearChat}
+          onClearMembers={handleClearMembers}
         />
 
         <CometChatMessageList

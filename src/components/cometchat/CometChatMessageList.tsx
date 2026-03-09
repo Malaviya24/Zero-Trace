@@ -123,23 +123,25 @@ function defaultAttachmentName(message: Message) {
 
 async function downloadMessageAttachment(message: Message, encryptionKey?: CryptoKey) {
   if (!message.storageId) throw new Error("Missing attachment URL");
+  const response = await fetch(message.storageId);
+  if (!response.ok) throw new Error("Failed to download attachment");
+
+  let blob: Blob;
   if (!message.isEncryptedFile || !encryptionKey) {
-    triggerBrowserDownload(message.storageId, defaultAttachmentName(message));
-    return;
+    blob = await response.blob();
+  } else {
+    const encryptedBuffer = await response.arrayBuffer();
+    const decryptedBuffer = await ChatCrypto.decryptFile(encryptedBuffer, encryptionKey);
+    blob = new Blob([decryptedBuffer], {
+      type: message.mimeType || "application/octet-stream",
+    });
   }
 
-  const response = await fetch(message.storageId);
-  if (!response.ok) throw new Error("Failed to download encrypted attachment");
-  const encryptedBuffer = await response.arrayBuffer();
-  const decryptedBuffer = await ChatCrypto.decryptFile(encryptedBuffer, encryptionKey);
-  const blob = new Blob([decryptedBuffer], {
-    type: message.mimeType || "application/octet-stream",
-  });
   const objectUrl = URL.createObjectURL(blob);
   try {
     triggerBrowserDownload(objectUrl, defaultAttachmentName(message));
   } finally {
-    URL.revokeObjectURL(objectUrl);
+    window.setTimeout(() => URL.revokeObjectURL(objectUrl), 1500);
   }
 }
 
@@ -368,23 +370,33 @@ function MessageBubble({
   const isAttachment = message.type === "image" || message.type === "video" || message.type === "file" || message.type === "audio";
 
   const downloadCurrentAttachment = useCallback(() => {
-    if (!displayUrl) return;
-    try {
-      triggerBrowserDownload(displayUrl, defaultAttachmentName(message));
-      onClearQueued(message._id);
-    } catch {
+    void (async () => {
+      if (!displayUrl && !message.storageId) return;
       onQueueDownload(message);
-    }
-  }, [displayUrl, message, onQueueDownload, onClearQueued]);
+      try {
+        if (displayUrl) {
+          triggerBrowserDownload(displayUrl, defaultAttachmentName(message));
+        } else {
+          await downloadMessageAttachment(message, encryptionKey);
+        }
+        onClearQueued(message._id);
+      } catch {
+        onQueueDownload(message);
+      }
+    })();
+  }, [displayUrl, message, onQueueDownload, onClearQueued, encryptionKey]);
 
   useEffect(() => {
     if (!displayUrl || !isAttachment || message.isMe || !canInteract) return;
     if (hasAutoAttempted(message._id)) return;
     markAutoAttempted(message._id);
+    // Always queue first for auto-download attempts. Browsers may silently block
+    // background downloads, so we keep a guaranteed manual recovery path.
+    onQueueDownload(message);
     try {
       triggerBrowserDownload(displayUrl, defaultAttachmentName(message));
     } catch {
-      onQueueDownload(message);
+      // Queue already populated above.
     }
   }, [displayUrl, isAttachment, message, canInteract, onQueueDownload, hasAutoAttempted, markAutoAttempted]);
 

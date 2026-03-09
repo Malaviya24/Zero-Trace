@@ -195,7 +195,6 @@ function GroupCallPageContent() {
   const processedSignalsRef = useRef<Set<string>>(new Set());
   const isProcessingRef = useRef(false);
   const peerSetupRef = useRef<Set<string>>(new Set());
-  const cleanupTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const hasNavigatedRef = useRef(false);
   const endingCallRef = useRef(false);
   const leaveTokenRef = useRef<string | null>(null);
@@ -446,6 +445,39 @@ function GroupCallPageContent() {
     [callE2EEKey, isCallEncryptionRequired]
   );
 
+  const cleanupCallRuntime = useCallback(
+    (options?: { isUnmount?: boolean }) => {
+      offerRetryTimersRef.current.forEach((timer) => clearTimeout(timer));
+      offerRetryTimersRef.current.clear();
+      peerFirstSeenAtRef.current.clear();
+      peerNegotiationRef.current.clear();
+      peerSetupRef.current.clear();
+      processedSignalsRef.current.clear();
+      isProcessingRef.current = false;
+      leaveTokenRef.current = null;
+      hasJoinedRef.current = false;
+
+      if (participantReconcileTimerRef.current) {
+        clearTimeout(participantReconcileTimerRef.current);
+        participantReconcileTimerRef.current = null;
+      }
+
+      sessionStorage.removeItem("call_display_name");
+      sessionStorage.removeItem("call_e2ee_key");
+      sessionStorage.removeItem("call_e2ee_room_id");
+
+      if (!options?.isUnmount) {
+        setCallParticipantToken(null);
+        setIsPeopleSheetOpen(false);
+        setIsChatSheetOpen(false);
+        setIsAudioSheetOpen(false);
+      }
+
+      actions.reset();
+    },
+    [actions]
+  );
+
   useEffect(() => {
     if (!validCallId || !call || hasJoinedRef.current) return;
     if (!roomSession) return;
@@ -455,11 +487,6 @@ function GroupCallPageContent() {
     }
 
     hasJoinedRef.current = true;
-
-    if (cleanupTimerRef.current) {
-      clearTimeout(cleanupTimerRef.current);
-      cleanupTimerRef.current = null;
-    }
 
     const displayName = resolveDisplayName();
     sessionStorage.setItem("call_display_name", displayName);
@@ -526,27 +553,9 @@ function GroupCallPageContent() {
     }
 
     return () => {
-      cleanupTimerRef.current = setTimeout(() => {
-        console.log("[Call] Cleaning up (deferred)");
-        useGroupCallStore.getState().actions.reset();
-        peerSetupRef.current.clear();
-        processedSignalsRef.current.clear();
-        leaveTokenRef.current = null;
-        setCallParticipantToken(null);
-        offerRetryTimersRef.current.forEach((timer) => clearTimeout(timer));
-        offerRetryTimersRef.current.clear();
-        peerFirstSeenAtRef.current.clear();
-        peerNegotiationRef.current.clear();
-        if (participantReconcileTimerRef.current) {
-          clearTimeout(participantReconcileTimerRef.current);
-          participantReconcileTimerRef.current = null;
-        }
-        sessionStorage.removeItem("call_display_name");
-        sessionStorage.removeItem("call_e2ee_key");
-        sessionStorage.removeItem("call_e2ee_room_id");
-      }, 100);
+      cleanupCallRuntime({ isUnmount: true });
     };
-  }, [validCallId, actions, shouldStartWithVideo]);
+  }, [validCallId, actions, shouldStartWithVideo, cleanupCallRuntime]);
 
   useEffect(() => {
     let intervalId: number | undefined;
@@ -562,26 +571,12 @@ function GroupCallPageContent() {
   useEffect(() => {
     if (call?.status !== "ended" || hasNavigatedRef.current) return;
     endingCallRef.current = true;
+    hasNavigatedRef.current = true;
+    cleanupCallRuntime();
     const targetPath = getReturnPath();
-    const timeoutId = window.setTimeout(() => {
-      if (hasNavigatedRef.current) return;
-      hasNavigatedRef.current = true;
-      offerRetryTimersRef.current.forEach((timer) => clearTimeout(timer));
-      offerRetryTimersRef.current.clear();
-      peerFirstSeenAtRef.current.clear();
-      peerNegotiationRef.current.clear();
-      if (participantReconcileTimerRef.current) {
-        clearTimeout(participantReconcileTimerRef.current);
-        participantReconcileTimerRef.current = null;
-      }
-      actions.reset();
-      sessionStorage.removeItem("call_e2ee_key");
-      sessionStorage.removeItem("call_e2ee_room_id");
-      clearCallReturnPath();
-      navigate(targetPath);
-    }, 1200);
-    return () => window.clearTimeout(timeoutId);
-  }, [call?.status, getReturnPath, actions, navigate]);
+    clearCallReturnPath();
+    navigate(targetPath, { replace: true });
+  }, [call?.status, cleanupCallRuntime, getReturnPath, navigate]);
 
   const clearOfferRetryTimer = useCallback((participantId: string) => {
     const existingTimer = offerRetryTimersRef.current.get(participantId);
@@ -642,12 +637,27 @@ function GroupCallPageContent() {
       if (endingCallRef.current || hasNavigatedRef.current || call?.status === "ended") {
         return null;
       }
+      const negotiationState = getPeerNegotiationState(participantId);
+      if (negotiationState.circuitOpen) {
+        return null;
+      }
 
       let existingPeer = useGroupCallStore.getState().actions.getPeerConnection(participantId);
       if (existingPeer) return existingPeer;
+      if (peerSetupRef.current.has(participantId)) {
+        return null;
+      }
 
       peerSetupRef.current.add(participantId);
-      const created = setupPeerConnectionRef.current(participantId);
+      let created: RTCPeerConnection | null = null;
+      try {
+        created = setupPeerConnectionRef.current(participantId);
+      } catch (error) {
+        console.error(`[Call] Failed to create peer connection for ${participantId}:`, error);
+        negotiationState.circuitOpen = true;
+        clearOfferRetryTimer(participantId);
+        useGroupCallStore.getState().actions.setError("Peer connection limit reached. Use Reconnect in People panel.");
+      }
       if (!created) {
         peerSetupRef.current.delete(participantId);
         return null;
@@ -656,7 +666,7 @@ function GroupCallPageContent() {
       existingPeer = useGroupCallStore.getState().actions.getPeerConnection(participantId);
       return existingPeer ?? null;
     },
-    [call?.status]
+    [call?.status, clearOfferRetryTimer, getPeerNegotiationState]
   );
 
   const cleanupPeerConnectionState = useCallback(
@@ -865,7 +875,17 @@ function GroupCallPageContent() {
     negotiationState.queuedReason = null;
     const generation = negotiationState.generation;
 
-    const pc = useGroupCallStore.getState().actions.createPeerConnection(participantId);
+    let pc: RTCPeerConnection;
+    try {
+      pc = useGroupCallStore.getState().actions.createPeerConnection(participantId);
+    } catch (error) {
+      console.error(`[Call] RTCPeerConnection construction failed for ${participantId}:`, error);
+      const failedState = getPeerNegotiationState(participantId);
+      failedState.circuitOpen = true;
+      clearOfferRetryTimer(participantId);
+      useGroupCallStore.getState().actions.setError("Cannot create more peer connections. Reconnect this participant.");
+      return null;
+    }
 
     const isStaleGeneration = () =>
       endingCallRef.current ||
@@ -968,6 +988,7 @@ function GroupCallPageContent() {
     isOfferInitiator,
     resetNegotiationHealth,
     validCallId,
+    clearOfferRetryTimer,
   ]);
   setupPeerConnectionRef.current = setupPeerConnection;
 
@@ -1006,6 +1027,10 @@ function GroupCallPageContent() {
         const createdNow = !existingPeer;
 
         if (!existingPeer) {
+          const negotiationState = getPeerNegotiationState(pid);
+          if (negotiationState.circuitOpen) {
+            return;
+          }
           console.log(`[Call] New participant: ${participant.displayName} (${pid})`);
           const ensured = ensurePeerConnection(pid);
           if (!ensured) return;
@@ -1280,21 +1305,8 @@ function GroupCallPageContent() {
       }
     }
 
-    offerRetryTimersRef.current.forEach((timer) => clearTimeout(timer));
-    offerRetryTimersRef.current.clear();
-    peerFirstSeenAtRef.current.clear();
-    peerNegotiationRef.current.clear();
-    if (participantReconcileTimerRef.current) {
-      clearTimeout(participantReconcileTimerRef.current);
-      participantReconcileTimerRef.current = null;
-    }
-    setIsPeopleSheetOpen(false);
-    setIsChatSheetOpen(false);
-    setIsAudioSheetOpen(false);
-    actions.reset();
+    cleanupCallRuntime();
     hasNavigatedRef.current = true;
-    sessionStorage.removeItem("call_e2ee_key");
-    sessionStorage.removeItem("call_e2ee_room_id");
     const targetPath = getReturnPath();
     clearCallReturnPath();
     navigate(targetPath);
