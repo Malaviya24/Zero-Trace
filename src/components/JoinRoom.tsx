@@ -19,6 +19,7 @@ import CometChatRoom from "@/components/cometchat/CometChatRoom";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { useRoomSession } from "@/hooks/useRoomSession";
 import { LoadingScreen } from "@/components/LoadingScreen";
+import { isRoomFullError, mapJoinRoomErrorMessage } from "@/lib/room-capacity";
 
 export default function JoinRoom() {
   const navigate = useNavigate();
@@ -37,6 +38,7 @@ export default function JoinRoom() {
   const [participantToken, setParticipantToken] = useState<string | null>(null);
   
   const room = useQuery((api as any).rooms.getRoomByRoomId, roomId ? { roomId } : "skip");
+  const capacity = useQuery((api as any).rooms.getJoinCapacity, roomId ? { roomId } : "skip");
   const joinRoomMutation = useMutation((api as any).rooms.joinRoom);
   const purgeIfExpiredMutation = useMutation((api as any).rooms.purgeIfExpired);
 
@@ -85,6 +87,10 @@ export default function JoinRoom() {
   const handleJoinRoom = async () => {
     if (!roomId || !displayName.trim() || !encryptionKey || !roomService) {
       toast.error("Missing required information to join room");
+      return;
+    }
+    if (capacity?.isFull) {
+      toast.error("Room is full. Try later or ask admin to increase limit.");
       return;
     }
 
@@ -136,7 +142,11 @@ export default function JoinRoom() {
       toast.success("Joined room successfully!");
     } catch (error) {
       console.error("Join room error:", error);
-      toast.error(error instanceof Error ? error.message : "Failed to join room");
+      if (isRoomFullError(error)) {
+        toast.error("Room is full. Try later or ask admin to increase limit.");
+      } else {
+        toast.error(mapJoinRoomErrorMessage(error));
+      }
       setIsJoining(false);
     }
   };
@@ -249,13 +259,26 @@ export default function JoinRoom() {
             <div className="bg-muted/50 rounded-lg p-3 space-y-2">
               <div className="flex items-center justify-between text-sm">
                 <span className="text-muted-foreground">Max Participants:</span>
-                <span>{room.maxParticipants}</span>
+                <span>{capacity?.maxParticipants ?? room.maxParticipants ?? 10}</span>
+              </div>
+              <div className="flex items-center justify-between text-sm">
+                <span className="text-muted-foreground">Active Now:</span>
+                <span>{capacity?.activeCount ?? 0}</span>
               </div>
               <div className="flex items-center justify-between text-sm">
                 <span className="text-muted-foreground">Password Protected:</span>
                 <span>{room.hasPassword ? "Yes" : "No"}</span>
               </div>
             </div>
+            {capacity?.isFull ? (
+              <Alert variant="destructive">
+                <AlertTitle>Room is full</AlertTitle>
+                <AlertDescription>
+                  This room is currently at capacity ({capacity.activeCount}/{capacity.maxParticipants}).
+                  Try again later or ask the admin to increase room size.
+                </AlertDescription>
+              </Alert>
+            ) : null}
 
             {/* Anonymous Identity */}
             <div className="space-y-3">
@@ -327,7 +350,8 @@ export default function JoinRoom() {
                 isJoining ||
                 !displayName.trim() ||
                 (!!room?.hasPassword && !password) ||
-                (!hasUrlKey && !manualKeySet)
+                (!hasUrlKey && !manualKeySet) ||
+                !!capacity?.isFull
               }
               className="w-full"
             >

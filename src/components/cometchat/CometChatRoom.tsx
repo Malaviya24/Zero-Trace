@@ -13,6 +13,7 @@ import { captureCallReturnPath } from "@/lib/call-navigation";
 import { shouldSendReadMark } from "@/lib/message-conflict-utils";
 import { firstUrlFromText } from "@/lib/url-utils";
 import { useAction } from "convex/react";
+import { CONFIG } from "@/lib/config";
 
 // CometChat Components
 import { CometChatLayout } from "./CometChatLayout";
@@ -47,6 +48,7 @@ interface Message {
   expiresAt?: number;
   _creationTime: number;
   encryptionKeyId: string;
+  mimeType?: string;
   senderId?: Id<"users">;
   reactions?: MessageReaction[];
   linkPreviewEncrypted?: string;
@@ -264,10 +266,15 @@ export default function CometChatRoom({ roomId, displayName, encryptionKey, part
     const decryptAll = async () => {
       const promises = visibleMessages.map(async (msg) => {
         let content = msg.content;
-        const normalizedType =
+        const normalizedMimeType = (msg.mimeType || "").toLowerCase();
+        const normalizedTypeBase =
           msg.messageType === "join" || msg.messageType === "leave"
             ? "system"
             : msg.messageType;
+        const normalizedType =
+          normalizedTypeBase === "file" && normalizedMimeType.startsWith("audio/")
+            ? "audio"
+            : normalizedTypeBase;
         const rawReplyToPreview = (msg as any).replyToPreview as
           | { senderName: string; content: string; type: 'text' | 'image' | 'video' | 'file' | 'audio' | 'system' }
           | undefined;
@@ -510,7 +517,7 @@ export default function CometChatRoom({ roomId, displayName, encryptionKey, part
     }
     const pendingId = `pending-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     const pendingBlobUrl =
-      file && (type === "image" || type === "video" || type === "file")
+      file && (type === "image" || type === "video" || type === "file" || type === "audio")
         ? URL.createObjectURL(file)
         : undefined;
 
@@ -888,13 +895,11 @@ export default function CometChatRoom({ roomId, displayName, encryptionKey, part
           onlineCount={onlineCount}
           onToggleSidebar={() => setIsSidebarMobileOpen(true)}
           onCall={async (video) => {
-            try {
-              const exportedCallKey = await ChatCrypto.exportKey(encryptionKey);
-              sessionStorage.setItem("call_e2ee_key", exportedCallKey);
-              sessionStorage.setItem("call_e2ee_room_id", roomId);
-            } catch (error) {
-              console.error("Failed to export call E2EE key:", error);
-              toast.error("Unable to prepare encrypted call key");
+            if (!CONFIG.callPreflight.canStartCalls) {
+              toast.error(
+                CONFIG.callPreflight.missingCallInfraReason ||
+                  "Calls are unavailable because call infrastructure is not configured."
+              );
               return;
             }
             sessionStorage.setItem("call_display_name", displayName);
@@ -939,13 +944,11 @@ export default function CometChatRoom({ roomId, displayName, encryptionKey, part
         remoteName={remoteCallName}
         onAcceptIncoming={async () => {
           if (!currentActiveCall) return;
-          try {
-            const exportedCallKey = await ChatCrypto.exportKey(encryptionKey);
-            sessionStorage.setItem("call_e2ee_key", exportedCallKey);
-            sessionStorage.setItem("call_e2ee_room_id", roomId);
-          } catch (error) {
-            console.error("Failed to export call E2EE key:", error);
-            toast.error("Unable to prepare encrypted call key");
+          if (!CONFIG.callPreflight.canStartCalls) {
+            toast.error(
+              CONFIG.callPreflight.missingCallInfraReason ||
+                "Calls are unavailable because call infrastructure is not configured."
+            );
             return;
           }
           sessionStorage.setItem("call_display_name", displayName);

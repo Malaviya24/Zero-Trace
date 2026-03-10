@@ -3,17 +3,14 @@ function parseList(value: string | undefined) {
   return value.split(",").map((s) => s.trim()).filter(Boolean);
 }
 
-const env = import.meta.env as {
+export type RuntimeEnv = {
   VITE_STUN_URLS?: string;
   VITE_TURN_URLS?: string;
   VITE_TURN_USERNAME?: string;
   VITE_TURN_CREDENTIAL?: string;
+  VITE_SFU_URL?: string;
+  PROD?: boolean;
 };
-
-const stunUrls = parseList(env.VITE_STUN_URLS);
-const turnUrls = parseList(env.VITE_TURN_URLS);
-const turnUser = env.VITE_TURN_USERNAME as string | undefined;
-const turnCred = env.VITE_TURN_CREDENTIAL as string | undefined;
 
 const defaultStun = [
   "stun:stun.l.google.com:19302",
@@ -23,33 +20,108 @@ const defaultStun = [
   "stun:stun4.l.google.com:19302",
 ];
 
-const iceServers: RTCIceServer[] = [];
-
-for (const u of (stunUrls.length ? stunUrls : defaultStun)) {
-  iceServers.push({ urls: u });
+function isLocalHostname(hostname: string | undefined) {
+  if (!hostname) return false;
+  const normalized = hostname.toLowerCase();
+  return (
+    normalized === "localhost" ||
+    normalized === "127.0.0.1" ||
+    normalized === "::1" ||
+    normalized.endsWith(".local")
+  );
 }
 
-if (turnUrls.length && turnUser && turnCred) {
-  iceServers.push({ urls: turnUrls, username: turnUser, credential: turnCred });
-} else {
-  iceServers.push({
-    urls: ["turn:openrelay.metered.ca:80", "turn:openrelay.metered.ca:443", "turn:openrelay.metered.ca:443?transport=tcp"],
-    username: "openrelayproject",
-    credential: "openrelayproject",
-  });
-  iceServers.push({
-    urls: "turn:relay1.expressturn.com:443",
-    username: "efB2YXSCWI3OEEKI3L",
-    credential: "JA7nOSJP8OJSRllf",
-  });
+export function resolveWebRtcConfig(
+  env: RuntimeEnv,
+  runtimeHostname?: string
+): {
+  iceServers: RTCIceServer[];
+  hasConfiguredTurn: boolean;
+  requireDedicatedTurn: boolean;
+  forceRelayTransport: boolean;
+  hasSfuEndpoint: boolean;
+  requireSfuEndpoint: boolean;
+  canStartCalls: boolean;
+  missingTurnReason: string | null;
+  missingSfuReason: string | null;
+  missingCallInfraReason: string | null;
+} {
+  const stunUrls = parseList(env.VITE_STUN_URLS);
+  const turnUrls = parseList(env.VITE_TURN_URLS);
+  const turnUser = env.VITE_TURN_USERNAME as string | undefined;
+  const turnCred = env.VITE_TURN_CREDENTIAL as string | undefined;
+  const hasConfiguredTurn = turnUrls.length > 0 && !!turnUser && !!turnCred;
+  const requireDedicatedTurn = !!env.PROD && !isLocalHostname(runtimeHostname);
+  const hasSfuEndpoint = !!env.VITE_SFU_URL;
+  const requireSfuEndpoint = !!env.PROD && !isLocalHostname(runtimeHostname);
+
+  const iceServers: RTCIceServer[] = [];
+
+  // TURN first for production stability across NAT/carrier networks.
+  if (hasConfiguredTurn) {
+    iceServers.push({ urls: turnUrls, username: turnUser, credential: turnCred });
+  } else if (!requireDedicatedTurn) {
+    // Dev/local fallback to keep local testing possible without dedicated relay.
+    iceServers.push({
+      urls: ["turn:openrelay.metered.ca:80", "turn:openrelay.metered.ca:443", "turn:openrelay.metered.ca:443?transport=tcp"],
+      username: "openrelayproject",
+      credential: "openrelayproject",
+    });
+    iceServers.push({
+      urls: "turn:relay1.expressturn.com:443",
+      username: "efB2YXSCWI3OEEKI3L",
+      credential: "JA7nOSJP8OJSRllf",
+    });
+  }
+
+  for (const u of (stunUrls.length ? stunUrls : defaultStun)) {
+    iceServers.push({ urls: u });
+  }
+
+  const missingTurnReason =
+    requireDedicatedTurn && !hasConfiguredTurn
+      ? "Calls are disabled because TURN relay credentials are missing for this production deployment."
+      : null;
+  const missingSfuReason =
+    requireSfuEndpoint && !hasSfuEndpoint
+      ? "Calls are disabled because the SFU endpoint (VITE_SFU_URL) is missing."
+      : null;
+
+  return {
+    iceServers,
+    hasConfiguredTurn,
+    requireDedicatedTurn,
+    forceRelayTransport: requireDedicatedTurn,
+    hasSfuEndpoint,
+    requireSfuEndpoint,
+    canStartCalls: (!requireDedicatedTurn || hasConfiguredTurn) && (!requireSfuEndpoint || hasSfuEndpoint),
+    missingTurnReason,
+    missingSfuReason,
+    missingCallInfraReason: missingTurnReason || missingSfuReason,
+  };
 }
+
+const env = import.meta.env as RuntimeEnv;
+const runtimeHostname = typeof window !== "undefined" ? window.location.hostname : undefined;
+const webrtcConfig = resolveWebRtcConfig(env, runtimeHostname);
 
 export const CONFIG = {
   webrtc: {
-    iceServers,
+    iceServers: webrtcConfig.iceServers,
     iceCandidatePoolSize: 10,
     bundlePolicy: "max-bundle" as RTCBundlePolicy,
     rtcpMuxPolicy: "require" as RTCRtcpMuxPolicy,
+    iceTransportPolicy: (webrtcConfig.forceRelayTransport ? "relay" : "all") as RTCIceTransportPolicy,
+  },
+  callPreflight: {
+    hasConfiguredTurn: webrtcConfig.hasConfiguredTurn,
+    requireDedicatedTurn: webrtcConfig.requireDedicatedTurn,
+    hasSfuEndpoint: webrtcConfig.hasSfuEndpoint,
+    requireSfuEndpoint: webrtcConfig.requireSfuEndpoint,
+    canStartCalls: webrtcConfig.canStartCalls,
+    missingTurnReason: webrtcConfig.missingTurnReason,
+    missingSfuReason: webrtcConfig.missingSfuReason,
+    missingCallInfraReason: webrtcConfig.missingCallInfraReason,
   },
   media: {
     audio: {

@@ -181,6 +181,7 @@ const schema = defineSchema(
         v.literal("idle"),
         v.literal("ringing"),
         v.literal("active"),
+        v.literal("ending"),
         v.literal("ended"),
         v.literal("missed")
       ),
@@ -192,6 +193,8 @@ const schema = defineSchema(
       // Phase 1: Scalability
       maxParticipants: v.optional(v.number()), // max participants for group calls
       sfuEnabled: v.optional(v.boolean()), // use SFU for group calls
+      mediaProvider: v.optional(v.union(v.literal("mesh"), v.literal("livekit"))),
+      mediaRegion: v.optional(v.string()),
       // Phase 2: Reliability
       recordingEnabled: v.optional(v.boolean()), // call recording
       recordingUrl: v.optional(v.string()), // recording storage URL
@@ -213,6 +216,21 @@ const schema = defineSchema(
       joinedAt: v.optional(v.number()), // when they joined the call
       leftAt: v.optional(v.number()), // when they left the call
       expiresAt: v.number(), // TTL timestamp
+      participantState: v.optional(
+        v.union(
+          v.literal("joining"),
+          v.literal("connected"),
+          v.literal("muted"),
+          v.literal("videoOn"),
+          v.literal("left")
+        )
+      ),
+      isMuted: v.optional(v.boolean()),
+      isVideoOn: v.optional(v.boolean()),
+      connectionState: v.optional(
+        v.union(v.literal("connecting"), v.literal("connected"), v.literal("disconnected"))
+      ),
+      lastStateUpdate: v.optional(v.number()),
       // Phase 1: Connection quality monitoring
       connectionQuality: v.optional(v.union(
         v.literal("excellent"),

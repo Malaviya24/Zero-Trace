@@ -7,6 +7,7 @@ export const typedApi = {
   rooms: {
     createRoom: api.rooms.createRoom as any,
     getRoomByRoomId: api.rooms.getRoomByRoomId as any,
+    getJoinCapacity: (api as any).rooms.getJoinCapacity as any,
     getRoomParticipants: api.rooms.getRoomParticipants as any,
     joinRoom: api.rooms.joinRoom as any,
     leaveRoom: api.rooms.leaveRoom as any,
@@ -25,10 +26,13 @@ export const typedApi = {
   },
   calls: {
     create: api.calls.create as any,
+    createSession: (api as any).calls.createSession as any,
     get: api.calls.get as any,
+    getLiveState: (api as any).calls.getLiveState as any,
     join: api.calls.join as any,
     leave: api.calls.leave as any,
     end: api.calls.end as any,
+    updateParticipantState: (api as any).calls.updateParticipantState as any,
     updateOffer: api.calls.updateOffer as any,
     rejectInvite: api.calls.rejectInvite as any,
     getParticipants: api.calls.getParticipants as any,

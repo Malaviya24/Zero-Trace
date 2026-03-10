@@ -1,4 +1,4 @@
-# Chattrix - Deployment Guide
+-+---# Chattrix - Deployment Guide
 
 A complete guide for deploying Chattrix from a downloaded ZIP file on your own server or hosting provider.
 
@@ -86,11 +86,21 @@ Create a `.env` file in the project root:
 
 ```env
 VITE_CONVEX_URL=https://your-project-name-123.convex.cloud
+VITE_CONVEX_SITE_URL=https://your-project-name-123.convex.site
+VITE_STUN_URLS=stun:stun.l.google.com:19302,stun:stun1.l.google.com:19302
+VITE_TURN_URLS=turn:turn.yourdomain.com:3478,turns:turn.yourdomain.com:5349?transport=tcp
+VITE_TURN_USERNAME=your-turn-username
+VITE_TURN_CREDENTIAL=your-turn-password
+VITE_SFU_URL=wss://your-project.livekit.cloud
 ```
 
 Replace with your **production** Convex URL from Step 2.
 
-Do not put backend secrets in `.env` or `.env.local`.
+Do not put backend secrets in `.env` or `.env.local`.  
+Set SFU secrets only in Convex backend environment:
+- `LIVEKIT_WS_URL`
+- `LIVEKIT_API_KEY`
+- `LIVEKIT_API_SECRET`
 
 ---
 
@@ -308,6 +318,12 @@ chattrix/
 | Variable | Required | Description |
 |---|---|---|
 | `VITE_CONVEX_URL` | Yes | Your Convex deployment URL |
+| `VITE_CONVEX_SITE_URL` | Yes | Your Convex site URL for auth/provider discovery |
+| `VITE_STUN_URLS` | Recommended | Comma-separated STUN servers |
+| `VITE_TURN_URLS` | Yes (for production calls) | Comma-separated TURN/TURNS relay URLs |
+| `VITE_TURN_USERNAME` | Yes (for production calls) | TURN username |
+| `VITE_TURN_CREDENTIAL` | Yes (for production calls) | TURN credential/password |
+| `VITE_SFU_URL` | Yes (for production calls) | Managed SFU WebSocket endpoint |
 
 ---
 
@@ -336,6 +352,17 @@ Make sure you ran `npm run convex:deploy:prod` and that `convex.json` points to 
 ### WebRTC calls not connecting
 - Calls require HTTPS in production (browsers block microphone access on HTTP).
 - STUN/TURN servers must be reachable from the user's network.
+- For cross-region/cross-carrier reliability, configure dedicated TURN credentials:
+  - `VITE_TURN_URLS`
+  - `VITE_TURN_USERNAME`
+  - `VITE_TURN_CREDENTIAL`
+- Configure managed SFU endpoint in frontend:
+  - `VITE_SFU_URL`
+- Configure SFU secrets in Convex backend env:
+  - `LIVEKIT_WS_URL`
+  - `LIVEKIT_API_KEY`
+  - `LIVEKIT_API_SECRET`
+- In production deployments, calls are blocked when TURN or SFU config is missing.
 - Check browser console for ICE connection errors.
 
 ### Build fails with TypeScript errors

@@ -16,6 +16,7 @@ import type * as crons from "../crons.js";
 import type * as encryption from "../encryption.js";
 import type * as http from "../http.js";
 import type * as messages from "../messages.js";
+import type * as roomLifecycle from "../roomLifecycle.js";
 import type * as rooms from "../rooms.js";
 import type * as sessionAuth from "../sessionAuth.js";
 import type * as signaling from "../signaling.js";
@@ -36,6 +37,7 @@ declare const fullApi: ApiFromModules<{
   encryption: typeof encryption;
   http: typeof http;
   messages: typeof messages;
+  roomLifecycle: typeof roomLifecycle;
   rooms: typeof rooms;
   sessionAuth: typeof sessionAuth;
   signaling: typeof signaling;

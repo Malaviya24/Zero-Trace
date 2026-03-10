@@ -9,6 +9,50 @@ const generateLeaveToken = () => {
   return `${first}${second}`;
 };
 
+const DEFAULT_CALL_MAX_PARTICIPANTS = 10;
+const LIVEKIT_SESSION_TTL_MS = 30 * 60 * 1000;
+const textEncoder = new TextEncoder();
+
+function base64UrlEncode(input: ArrayBuffer | Uint8Array | string) {
+  const bytes =
+    typeof input === "string"
+      ? textEncoder.encode(input)
+      : input instanceof Uint8Array
+      ? input
+      : new Uint8Array(input);
+  let binary = "";
+  for (let i = 0; i < bytes.length; i += 1) {
+    binary += String.fromCharCode(bytes[i]);
+  }
+  return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
+}
+
+async function createHS256Jwt(payload: Record<string, unknown>, secret: string) {
+  const header = { alg: "HS256", typ: "JWT" };
+  const encodedHeader = base64UrlEncode(JSON.stringify(header));
+  const encodedPayload = base64UrlEncode(JSON.stringify(payload));
+  const signingInput = `${encodedHeader}.${encodedPayload}`;
+
+  const key = await crypto.subtle.importKey(
+    "raw",
+    textEncoder.encode(secret),
+    { name: "HMAC", hash: "SHA-256" },
+    false,
+    ["sign"]
+  );
+
+  const signature = await crypto.subtle.sign("HMAC", key, textEncoder.encode(signingInput));
+  const encodedSignature = base64UrlEncode(signature);
+  return `${signingInput}.${encodedSignature}`;
+}
+
+function resolveLiveKitConfig() {
+  const wsUrl = process.env.LIVEKIT_WS_URL || process.env.SFU_URL || process.env.VITE_SFU_URL;
+  const apiKey = process.env.LIVEKIT_API_KEY || process.env.SFU_API_KEY;
+  const apiSecret = process.env.LIVEKIT_API_SECRET || process.env.SFU_API_SECRET;
+  return { wsUrl, apiKey, apiSecret };
+}
+
 async function getCallAndValidate(ctx: any, callId: any) {
   const call = await ctx.db.get(callId);
   if (!call || call.expiresAt < Date.now()) {
@@ -45,8 +89,8 @@ export const create = mutation({
 
     const now = Date.now();
     const expiresAt = Math.min(room.expiresAt, now + 4 * 60 * 60 * 1000);
-    const e2eeEnabled = args.e2ee ?? true;
-    const sfuEnabled = e2eeEnabled ? false : (args.sfuEnabled ?? false);
+    const sfuEnabled = args.sfuEnabled ?? true;
+    const e2eeEnabled = args.e2ee ?? !sfuEnabled;
 
     const callId = await ctx.db.insert("calls", {
       roomId: args.roomId,
@@ -54,8 +98,10 @@ export const create = mutation({
       createdByParticipantId: roomParticipant._id,
       status: "ringing",
       e2ee: e2eeEnabled,
-      maxParticipants: args.maxParticipants || 10,
+      maxParticipants: args.maxParticipants || DEFAULT_CALL_MAX_PARTICIPANTS,
       sfuEnabled,
+      mediaProvider: sfuEnabled ? "livekit" : "mesh",
+      mediaRegion: process.env.LIVEKIT_REGION,
       recordingEnabled: false,
       expiresAt,
     });
@@ -70,6 +116,11 @@ export const create = mutation({
       joinedAt: now,
       leaveToken: generateLeaveToken(),
       expiresAt,
+      participantState: "joining",
+      connectionState: "connecting",
+      isMuted: false,
+      isVideoOn: false,
+      lastStateUpdate: now,
     });
 
     await ctx.db.insert("messages", {
@@ -116,7 +167,7 @@ export const join = mutation({
       .withIndex("by_call_id", (q) => q.eq("callId", args.callId))
       .collect();
     const activeParticipants = allParticipants.filter((participant) => !participant.leftAt);
-    const maxParticipants = call.maxParticipants ?? 10;
+    const maxParticipants = call.maxParticipants ?? DEFAULT_CALL_MAX_PARTICIPANTS;
 
     const buildUniqueDisplayName = (baseName: string, excludeParticipantId?: string) => {
       const used = new Set(
@@ -146,6 +197,9 @@ export const join = mutation({
         joinedAt: now,
         leaveToken,
         participantToken: args.roomParticipantToken,
+        participantState: "joining",
+        connectionState: "connecting",
+        lastStateUpdate: now,
       });
 
       const sorted = [...activeParticipants].sort(
@@ -183,6 +237,11 @@ export const join = mutation({
         expiresAt: call.expiresAt,
         leaveToken,
         participantToken: args.roomParticipantToken,
+        participantState: "joining",
+        connectionState: "connecting",
+        isMuted: false,
+        isVideoOn: false,
+        lastStateUpdate: now,
       });
       participantId = priorParticipant._id;
     } else {
@@ -196,6 +255,11 @@ export const join = mutation({
         joinedAt: now,
         expiresAt: call.expiresAt,
         leaveToken,
+        participantState: "joining",
+        connectionState: "connecting",
+        isMuted: false,
+        isVideoOn: false,
+        lastStateUpdate: now,
       });
     }
 
@@ -265,7 +329,7 @@ export const end = mutation({
 
     const now = Date.now();
     await ctx.db.patch(args.callId, {
-      status: "ended",
+      status: "ending",
       endedAt: now,
     });
 
@@ -278,9 +342,18 @@ export const end = mutation({
       if (!participant.leftAt) {
         await ctx.db.patch(participant._id, {
           leftAt: now,
+          leaveToken: undefined,
+          participantState: "left",
+          connectionState: "disconnected",
+          lastStateUpdate: now,
         });
       }
     }
+
+    await ctx.db.patch(args.callId, {
+      status: "ended",
+      endedAt: now,
+    });
   },
 });
 
@@ -312,6 +385,9 @@ export const leave = mutation({
       await ctx.db.patch(participant._id, {
         leftAt: now,
         leaveToken: undefined,
+        participantState: "left",
+        connectionState: "disconnected",
+        lastStateUpdate: now,
       });
     }
 
@@ -325,7 +401,7 @@ export const leave = mutation({
 
     if (isStarter) {
       await ctx.db.patch(args.callId, {
-        status: "ended",
+        status: "ending",
         endedAt: now,
       });
 
@@ -339,9 +415,17 @@ export const leave = mutation({
           await ctx.db.patch(entry._id, {
             leftAt: entry.leftAt ?? now,
             leaveToken: undefined,
+            participantState: "left",
+            connectionState: "disconnected",
+            lastStateUpdate: now,
           });
         }
       }
+
+      await ctx.db.patch(args.callId, {
+        status: "ended",
+        endedAt: now,
+      });
 
       if (call.roomId) {
         await ctx.db.insert("messages", {
@@ -367,6 +451,10 @@ export const leave = mutation({
     const activeCount = remainingParticipants.filter((entry) => entry.leftAt === undefined).length;
 
     if (activeCount === 0) {
+      await ctx.db.patch(args.callId, {
+        status: "ending",
+        endedAt: now,
+      });
       await ctx.db.patch(args.callId, {
         status: "ended",
         endedAt: now,
@@ -413,10 +501,18 @@ export const rejectInvite = mutation({
         joinedAt: now,
         leftAt: now,
         expiresAt: call.expiresAt,
+        participantState: "left",
+        connectionState: "disconnected",
+        isMuted: false,
+        isVideoOn: false,
+        lastStateUpdate: now,
       });
     } else if (!participant.leftAt) {
       await ctx.db.patch(participant._id, {
         leftAt: now,
+        participantState: "left",
+        connectionState: "disconnected",
+        lastStateUpdate: now,
       });
     }
 
@@ -498,6 +594,188 @@ export const getParticipants = query({
       return participants.filter((participant) => participant.leftAt === undefined);
     } catch {
       return [];
+    }
+  },
+});
+
+export const createSession = mutation({
+  args: {
+    callId: v.id("calls"),
+    participantId: v.id("callParticipants"),
+    participantToken: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const participant = await requireCallParticipantSession(ctx, {
+      callId: args.callId,
+      participantId: args.participantId,
+      participantToken: args.participantToken,
+    });
+
+    const call = await ctx.db.get(args.callId);
+    if (!call || call.expiresAt <= Date.now() || !call.roomId || call.status === "ended") {
+      throw new Error("Call unavailable");
+    }
+    if (!call.sfuEnabled || call.mediaProvider === "mesh") {
+      return {
+        provider: "mesh" as const,
+        endpoint: null,
+        token: null,
+        expiresAt: Date.now() + 60_000,
+        participantRole: participant.role,
+        roomName: null,
+      };
+    }
+
+    const { wsUrl, apiKey, apiSecret } = resolveLiveKitConfig();
+    if (!wsUrl || !apiKey || !apiSecret) {
+      throw new Error("SFU is not configured. Missing LIVEKIT_WS_URL/API_KEY/API_SECRET.");
+    }
+
+    const nowMs = Date.now();
+    const nowSec = Math.floor(nowMs / 1000);
+    const expMs = Math.min(call.expiresAt, nowMs + LIVEKIT_SESSION_TTL_MS);
+    const expSec = Math.floor(expMs / 1000);
+    const roomName = `room-${call.roomId}`;
+    const identity = String(participant._id);
+
+    const payload = {
+      iss: apiKey,
+      sub: identity,
+      iat: nowSec,
+      nbf: nowSec - 5,
+      exp: expSec,
+      name: participant.displayName,
+      metadata: JSON.stringify({
+        callId: String(call._id),
+        roomId: call.roomId,
+        role: participant.role,
+      }),
+      video: {
+        room: roomName,
+        roomJoin: true,
+        canPublish: true,
+        canSubscribe: true,
+        canPublishData: true,
+      },
+    };
+
+    const token = await createHS256Jwt(payload, apiSecret);
+
+    await ctx.db.patch(participant._id, {
+      participantState: "joining",
+      connectionState: "connecting",
+      lastStateUpdate: nowMs,
+    });
+
+    if (call.status === "ringing" || call.status === "idle") {
+      await ctx.db.patch(call._id, {
+        status: "active",
+        startedAt: call.startedAt ?? nowMs,
+      });
+    }
+
+    return {
+      provider: "livekit" as const,
+      endpoint: wsUrl,
+      token,
+      expiresAt: expMs,
+      participantRole: participant.role,
+      roomName,
+    };
+  },
+});
+
+export const updateParticipantState = mutation({
+  args: {
+    callId: v.id("calls"),
+    participantId: v.id("callParticipants"),
+    participantToken: v.string(),
+    participantState: v.optional(
+      v.union(
+        v.literal("joining"),
+        v.literal("connected"),
+        v.literal("muted"),
+        v.literal("videoOn"),
+        v.literal("left")
+      )
+    ),
+    isMuted: v.optional(v.boolean()),
+    isVideoOn: v.optional(v.boolean()),
+    connectionState: v.optional(v.union(v.literal("connecting"), v.literal("connected"), v.literal("disconnected"))),
+  },
+  handler: async (ctx, args) => {
+    const participant = await requireCallParticipantSession(ctx, {
+      callId: args.callId,
+      participantId: args.participantId,
+      participantToken: args.participantToken,
+      requireActive: false,
+    });
+
+    const patch: Record<string, unknown> = {
+      lastStateUpdate: Date.now(),
+    };
+    if (args.participantState !== undefined) patch.participantState = args.participantState;
+    if (args.isMuted !== undefined) patch.isMuted = args.isMuted;
+    if (args.isVideoOn !== undefined) patch.isVideoOn = args.isVideoOn;
+    if (args.connectionState !== undefined) patch.connectionState = args.connectionState;
+    if (args.participantState === "left") {
+      patch.leftAt = participant.leftAt ?? Date.now();
+      patch.leaveToken = undefined;
+    }
+
+    await ctx.db.patch(participant._id, patch);
+    return { ok: true as const };
+  },
+});
+
+export const getLiveState = query({
+  args: {
+    callId: v.id("calls"),
+    participantId: v.id("callParticipants"),
+    participantToken: v.string(),
+  },
+  handler: async (ctx, args) => {
+    try {
+      await requireCallParticipantSession(ctx, {
+        callId: args.callId,
+        participantId: args.participantId,
+        participantToken: args.participantToken,
+        requireActive: false,
+      });
+
+      const call = await ctx.db.get(args.callId);
+      if (!call) return null;
+
+      const participants = await ctx.db
+        .query("callParticipants")
+        .withIndex("by_call_id", (q) => q.eq("callId", args.callId))
+        .collect();
+
+      return {
+        call: {
+          _id: call._id,
+          roomId: call.roomId,
+          status: call.status,
+          startedAt: call.startedAt,
+          endedAt: call.endedAt,
+          mediaProvider: call.mediaProvider ?? (call.sfuEnabled ? "livekit" : "mesh"),
+          sfuEnabled: call.sfuEnabled ?? false,
+        },
+        participants: participants
+          .filter((participant) => !participant.leftAt)
+          .map((participant) => ({
+            _id: participant._id,
+            displayName: participant.displayName,
+            role: participant.role,
+            participantState: participant.participantState ?? "connecting",
+            isMuted: participant.isMuted ?? false,
+            isVideoOn: participant.isVideoOn ?? false,
+            connectionState: participant.connectionState ?? "connecting",
+            lastStateUpdate: participant.lastStateUpdate,
+          })),
+      };
+    } catch {
+      return null;
     }
   },
 });

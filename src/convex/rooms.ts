@@ -285,6 +285,36 @@ export const getRoomByRoomId = query({
   },
 });
 
+export const getJoinCapacity = query({
+  args: { roomId: v.string() },
+  handler: async (ctx, args) => {
+    const room = await getRoomDocByRoomId(ctx, args.roomId);
+    if (!room || isRoomExpiredOrInactive(room)) {
+      return {
+        exists: false,
+        maxParticipants: 0,
+        activeCount: 0,
+        isFull: false,
+      };
+    }
+
+    const activeParticipants = await ctx.db
+      .query("participants")
+      .withIndex("by_room_id", (q) => q.eq("roomId", args.roomId))
+      .filter((q) => q.eq(q.field("isActive"), true))
+      .collect();
+
+    const maxParticipants = room.maxParticipants || 10;
+    const activeCount = activeParticipants.length;
+    return {
+      exists: true,
+      maxParticipants,
+      activeCount,
+      isFull: activeCount >= maxParticipants,
+    };
+  },
+});
+
 export const purgeIfExpired = mutation({
   args: { roomId: v.string() },
   handler: async (ctx, args) => {

@@ -255,6 +255,7 @@ export const useGroupCallStore = create<GroupCallState & { actions: GroupCallAct
         iceCandidatePoolSize: CONFIG.webrtc.iceCandidatePoolSize,
         bundlePolicy: CONFIG.webrtc.bundlePolicy,
         rtcpMuxPolicy: CONFIG.webrtc.rtcpMuxPolicy,
+        iceTransportPolicy: CONFIG.webrtc.iceTransportPolicy,
       });
 
       // Keep offer SDP valid even when local media isn't ready yet.
