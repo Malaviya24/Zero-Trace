@@ -6,6 +6,7 @@ import {
   Smile,
   Mic,
   Image as ImageIcon,
+  Music,
   Video,
   X,
   Loader2,
@@ -46,7 +47,7 @@ export function CometChatMessageComposer({
   const [isRecording, setIsRecording] = useState(false);
   const [pendingAttachment, setPendingAttachment] = useState<{
     file: File;
-    type: "image" | "video" | "file";
+    type: "image" | "video" | "file" | "audio";
   } | null>(null);
   const [attachmentPreviewUrl, setAttachmentPreviewUrl] = useState<string | null>(null);
 
@@ -115,10 +116,13 @@ export function CometChatMessageComposer({
     const file = e.target.files?.[0];
     if (!file) return;
 
-    const type = file.type.startsWith("image/")
+    const normalizedMimeType = (file.type || "").toLowerCase();
+    const type = normalizedMimeType.startsWith("image/")
       ? "image"
-      : file.type.startsWith("video/")
+      : normalizedMimeType.startsWith("video/")
       ? "video"
+      : normalizedMimeType.startsWith("audio/")
+      ? "audio"
       : "file";
     setPendingAttachment({ file, type });
   };
@@ -260,6 +264,8 @@ export function CometChatMessageComposer({
                   ? "Photo"
                   : pendingAttachment.type === "video"
                   ? "Video"
+                  : pendingAttachment.type === "audio"
+                  ? "Audio"
                   : "File"} • {formatFileSize(pendingAttachment.file.size)}
               </p>
             </div>
@@ -328,6 +334,18 @@ export function CometChatMessageComposer({
                   }}
                 >
                   <Video className="h-4 w-4" /> Video
+                </Button>
+                <Button
+                  variant="ghost"
+                  className="justify-start gap-2"
+                  onClick={() => {
+                    if (fileInputRef.current) {
+                      fileInputRef.current.accept = "audio/*";
+                      fileInputRef.current.click();
+                    }
+                  }}
+                >
+                  <Music className="h-4 w-4" /> Audio
                 </Button>
                 <Button
                   variant="ghost"

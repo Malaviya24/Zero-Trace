@@ -411,7 +411,12 @@ export const sendMessage = mutation({
         participantToken: args.participantToken,
       });
 
-      const messageType = args.messageType || "text";
+      const rawMessageType = args.messageType || "text";
+      const normalizedMimeType = (args.mimeType || "").toLowerCase();
+      const messageType =
+        rawMessageType === "file" && normalizedMimeType.startsWith("audio/")
+          ? "audio"
+          : rawMessageType;
       const body = args.content?.trim() ?? "";
 
       if (messageType === "text" && !body) {

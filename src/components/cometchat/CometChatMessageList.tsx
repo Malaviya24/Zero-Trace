@@ -1,7 +1,7 @@
 import React, { useMemo, useRef, useEffect, useState, useCallback } from "react";
 import { format } from "date-fns";
 import { cn } from "@/lib/utils";
-import { CheckCheck, Clock3, Reply, FileIcon, Download, Play } from "lucide-react";
+import { CheckCheck, Clock3, Reply, FileIcon, Download, Play, Pause } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -114,11 +114,25 @@ function triggerBrowserDownload(url: string, fileName: string) {
 }
 
 function defaultAttachmentName(message: Message) {
+  const normalizedMimeType = (message.mimeType || "").toLowerCase();
   if (message.fileName?.trim()) return message.fileName;
+  if (normalizedMimeType.startsWith("audio/")) return `audio-${message._id}.bin`;
   if (message.type === "image") return `image-${message._id}.bin`;
   if (message.type === "video") return `video-${message._id}.bin`;
   if (message.type === "audio") return `audio-${message._id}.bin`;
   return `file-${message._id}.bin`;
+}
+
+function isAudioMimeType(mimeType: string | undefined) {
+  return (mimeType || "").toLowerCase().startsWith("audio/");
+}
+
+function formatAudioTime(seconds: number) {
+  if (!Number.isFinite(seconds) || seconds < 0) return "0:00";
+  const totalSeconds = Math.floor(seconds);
+  const minutes = Math.floor(totalSeconds / 60);
+  const remainingSeconds = totalSeconds % 60;
+  return `${minutes}:${remainingSeconds.toString().padStart(2, "0")}`;
 }
 
 async function downloadMessageAttachment(message: Message, encryptionKey?: CryptoKey) {
@@ -339,6 +353,11 @@ function MessageBubble({
   const [longPressTimer, setLongPressTimer] = useState<NodeJS.Timeout | null>(null);
   const [swipeOffset, setSwipeOffset] = useState(0);
   const [decryptedUrl, setDecryptedUrl] = useState<string | null>(null);
+  const [audioPlaying, setAudioPlaying] = useState(false);
+  const [audioCurrentTime, setAudioCurrentTime] = useState(0);
+  const [audioDuration, setAudioDuration] = useState(0);
+  const [audioError, setAudioError] = useState<string | null>(null);
+  const audioRef = useRef<HTMLAudioElement | null>(null);
 
   useEffect(() => {
     if (!message.storageId || !message.isEncryptedFile || !encryptionKey) return;
@@ -365,9 +384,17 @@ function MessageBubble({
     };
   }, [message.storageId, message.isEncryptedFile, message.mimeType, encryptionKey]);
 
+  const effectiveType =
+    message.type === "file" && isAudioMimeType(message.mimeType)
+      ? "audio"
+      : message.type;
   const displayUrl = message.isEncryptedFile ? decryptedUrl : message.storageId;
   const canInteract = message.status !== "sending";
-  const isAttachment = message.type === "image" || message.type === "video" || message.type === "file" || message.type === "audio";
+  const isAttachment =
+    effectiveType === "image" ||
+    effectiveType === "video" ||
+    effectiveType === "file" ||
+    effectiveType === "audio";
 
   const downloadCurrentAttachment = useCallback(() => {
     void (async () => {
@@ -399,6 +426,70 @@ function MessageBubble({
       // Queue already populated above.
     }
   }, [displayUrl, isAttachment, message, canInteract, onQueueDownload, hasAutoAttempted, markAutoAttempted]);
+
+  useEffect(() => {
+    if (effectiveType !== "audio") return;
+    const element = audioRef.current;
+    if (!element) return;
+    setAudioPlaying(false);
+    setAudioCurrentTime(0);
+    setAudioDuration(0);
+    setAudioError(null);
+
+    const handleTimeUpdate = () => setAudioCurrentTime(element.currentTime || 0);
+    const handleLoadedMetadata = () => {
+      setAudioDuration(element.duration || 0);
+      setAudioError(null);
+    };
+    const handlePlay = () => setAudioPlaying(true);
+    const handlePause = () => setAudioPlaying(false);
+    const handleEnded = () => {
+      setAudioPlaying(false);
+      setAudioCurrentTime(0);
+    };
+    const handleError = () => {
+      setAudioPlaying(false);
+      setAudioError("Audio preview unavailable in this browser.");
+    };
+
+    element.addEventListener("timeupdate", handleTimeUpdate);
+    element.addEventListener("loadedmetadata", handleLoadedMetadata);
+    element.addEventListener("play", handlePlay);
+    element.addEventListener("pause", handlePause);
+    element.addEventListener("ended", handleEnded);
+    element.addEventListener("error", handleError);
+
+    return () => {
+      element.removeEventListener("timeupdate", handleTimeUpdate);
+      element.removeEventListener("loadedmetadata", handleLoadedMetadata);
+      element.removeEventListener("play", handlePlay);
+      element.removeEventListener("pause", handlePause);
+      element.removeEventListener("ended", handleEnded);
+      element.removeEventListener("error", handleError);
+    };
+  }, [effectiveType, displayUrl]);
+
+  const handleToggleAudioPlayback = useCallback(() => {
+    if (effectiveType !== "audio") return;
+    const element = audioRef.current;
+    if (!element || !displayUrl) return;
+
+    if (audioPlaying) {
+      element.pause();
+      return;
+    }
+
+    element.play().catch(() => {
+      setAudioError("Tap play again or use download if playback is blocked.");
+    });
+  }, [audioPlaying, displayUrl, effectiveType]);
+
+  const handleAudioSeek = useCallback((value: number) => {
+    const element = audioRef.current;
+    if (!element || !Number.isFinite(value)) return;
+    element.currentTime = value;
+    setAudioCurrentTime(value);
+  }, []);
 
   const handlers = useSwipeable({
     onSwiping: (eventData) => {
@@ -558,15 +649,15 @@ function MessageBubble({
           <div
             className={cn(
               "px-2 py-1.5 text-[14.2px] text-[#111b21] dark:text-[#e9edef] leading-[19px] min-w-[80px]",
-              message.type === "image" && "p-1",
-              message.type === "video" && "p-1"
+              effectiveType === "image" && "p-1",
+              effectiveType === "video" && "p-1"
             )}
           >
-            {message.type === "text" ? (
+            {effectiveType === "text" ? (
               <div className="whitespace-pre-wrap break-words">{renderLinkedText(message.content)}</div>
             ) : null}
 
-            {message.type === "text" && message.linkPreview ? (
+            {effectiveType === "text" && message.linkPreview ? (
               <a
                 href={message.linkPreview.canonicalUrl}
                 target="_blank"
@@ -601,7 +692,7 @@ function MessageBubble({
               </a>
             ) : null}
 
-            {message.type === "image" ? (
+            {effectiveType === "image" ? (
               <div className="relative group/image mb-1">
                 {displayUrl ? (
                   <>
@@ -628,7 +719,7 @@ function MessageBubble({
               </div>
             ) : null}
 
-            {message.type === "video" ? (
+            {effectiveType === "video" ? (
               <div className="relative group/video mb-1">
                 {displayUrl ? (
                   <>
@@ -650,7 +741,7 @@ function MessageBubble({
               </div>
             ) : null}
 
-            {message.type === "file" ? (
+            {effectiveType === "file" ? (
               <div className="flex items-center gap-3 bg-black/5 dark:bg-white/5 p-2 rounded-md mb-1">
                 <div className="bg-[#f06d6d] text-white p-2 rounded-lg">
                   <FileIcon className="h-6 w-6" />
@@ -670,27 +761,46 @@ function MessageBubble({
               </div>
             ) : null}
 
-            {message.type === "audio" ? (
-              <div className="flex items-center gap-2 min-w-[240px] py-1">
-                <Button
-                  size="icon"
-                  variant="ghost"
-                  className="h-10 w-10 rounded-full bg-slate-200 dark:bg-slate-700"
-                  onClick={() => {
-                    if (!displayUrl) return;
-                    const audio = new Audio(displayUrl);
-                    audio.play().catch(() => {});
-                  }}
-                >
-                  <Play className="h-5 w-5 ml-1 fill-current" />
-                </Button>
-                {displayUrl ? (
-                  <audio controls className="h-10 max-w-[220px]" src={displayUrl} preload="metadata" />
-                ) : null}
-                {displayUrl ? (
-                  <button type="button" className="p-2" onClick={downloadCurrentAttachment}>
-                    <Download className="h-5 w-5 opacity-70" />
-                  </button>
+            {effectiveType === "audio" ? (
+              <div className="min-w-[260px] max-w-[340px] py-1">
+                <audio ref={audioRef} src={displayUrl || undefined} preload="metadata" />
+                <div className="flex items-center gap-2">
+                  <Button
+                    type="button"
+                    size="icon"
+                    variant="ghost"
+                    className="h-10 w-10 rounded-full bg-slate-200 text-slate-900 hover:bg-slate-300 dark:bg-slate-700 dark:text-slate-100 dark:hover:bg-slate-600"
+                    onClick={handleToggleAudioPlayback}
+                    disabled={!displayUrl}
+                  >
+                    {audioPlaying ? <Pause className="h-5 w-5 fill-current" /> : <Play className="h-5 w-5 ml-0.5 fill-current" />}
+                  </Button>
+
+                  <div className="flex-1">
+                    <input
+                      type="range"
+                      min={0}
+                      max={Math.max(audioDuration, 1)}
+                      value={Math.min(audioCurrentTime, Math.max(audioDuration, 1))}
+                      onChange={(event) => handleAudioSeek(Number(event.target.value))}
+                      className="h-1.5 w-full cursor-pointer accent-primary"
+                      disabled={!displayUrl}
+                    />
+                    <div className="mt-1 flex items-center justify-between text-[11px] text-[#667781] dark:text-[#8696a0]">
+                      <span>{formatAudioTime(audioCurrentTime)}</span>
+                      <span>{formatAudioTime(audioDuration)}</span>
+                    </div>
+                  </div>
+
+                  {displayUrl ? (
+                    <button type="button" className="p-2" onClick={downloadCurrentAttachment}>
+                      <Download className="h-5 w-5 opacity-70" />
+                    </button>
+                  ) : null}
+                </div>
+
+                {audioError ? (
+                  <p className="mt-1 text-xs text-amber-600 dark:text-amber-400">{audioError}</p>
                 ) : null}
               </div>
             ) : null}
