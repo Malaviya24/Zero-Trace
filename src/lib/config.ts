@@ -9,6 +9,7 @@ export type RuntimeEnv = {
   VITE_TURN_USERNAME?: string;
   VITE_TURN_CREDENTIAL?: string;
   VITE_SFU_URL?: string;
+  VITE_ENFORCE_CALL_PREFLIGHT?: string;
   PROD?: boolean;
 };
 
@@ -54,6 +55,9 @@ export function resolveWebRtcConfig(
   const requireDedicatedTurn = !!env.PROD && !isLocalHostname(runtimeHostname);
   const hasSfuEndpoint = !!env.VITE_SFU_URL;
   const requireSfuEndpoint = !!env.PROD && !isLocalHostname(runtimeHostname);
+  const enforceCallPreflight =
+    env.VITE_ENFORCE_CALL_PREFLIGHT === "1" ||
+    env.VITE_ENFORCE_CALL_PREFLIGHT?.toLowerCase() === "true";
 
   const iceServers: RTCIceServer[] = [];
 
@@ -80,11 +84,11 @@ export function resolveWebRtcConfig(
 
   const missingTurnReason =
     requireDedicatedTurn && !hasConfiguredTurn
-      ? "Calls are disabled because TURN relay credentials are missing for this production deployment."
+      ? "TURN relay credentials are missing for this production deployment. Cross-network call reliability may be degraded."
       : null;
   const missingSfuReason =
     requireSfuEndpoint && !hasSfuEndpoint
-      ? "Calls are disabled because the SFU endpoint (VITE_SFU_URL) is missing."
+      ? "SFU endpoint (VITE_SFU_URL) is missing. Call setup may fail until it is configured."
       : null;
 
   return {
@@ -94,7 +98,11 @@ export function resolveWebRtcConfig(
     forceRelayTransport: requireDedicatedTurn,
     hasSfuEndpoint,
     requireSfuEndpoint,
-    canStartCalls: (!requireDedicatedTurn || hasConfiguredTurn) && (!requireSfuEndpoint || hasSfuEndpoint),
+    // Preflight is advisory by default to avoid false production hard-blocks.
+    canStartCalls:
+      !enforceCallPreflight ||
+      ((!requireDedicatedTurn || hasConfiguredTurn) &&
+        (!requireSfuEndpoint || hasSfuEndpoint)),
     missingTurnReason,
     missingSfuReason,
     missingCallInfraReason: missingTurnReason || missingSfuReason,

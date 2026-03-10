@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { resolveWebRtcConfig } from "./config";
 
 describe("resolveWebRtcConfig", () => {
-  it("blocks production calls when dedicated TURN credentials are missing", () => {
+  it("does not hard-block production calls when TURN is missing by default", () => {
     const result = resolveWebRtcConfig(
       {
         PROD: true,
@@ -13,9 +13,23 @@ describe("resolveWebRtcConfig", () => {
 
     expect(result.requireDedicatedTurn).toBe(true);
     expect(result.hasConfiguredTurn).toBe(false);
-    expect(result.canStartCalls).toBe(false);
+    expect(result.canStartCalls).toBe(true);
     expect(result.missingTurnReason).toContain("TURN");
     expect(result.iceServers.every((entry) => String(entry.urls).startsWith("stun:"))).toBe(true);
+  });
+
+  it("enforces preflight blocking when explicitly enabled", () => {
+    const result = resolveWebRtcConfig(
+      {
+        PROD: true,
+        VITE_STUN_URLS: "stun:stun.l.google.com:19302",
+        VITE_ENFORCE_CALL_PREFLIGHT: "true",
+      },
+      "kpgu.in"
+    );
+
+    expect(result.canStartCalls).toBe(false);
+    expect(result.missingTurnReason).toContain("TURN");
   });
 
   it("allows local/dev calls with fallback relay when TURN credentials are absent", () => {
