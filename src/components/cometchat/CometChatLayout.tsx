@@ -1,4 +1,5 @@
 import React from 'react';
+
 import { cn } from "@/lib/utils";
 
 interface CometChatLayoutProps {
@@ -14,39 +15,37 @@ export function CometChatLayout({
   sidebar,
   details,
   showSidebarMobile = false,
-  onToggleSidebar
+  onToggleSidebar,
 }: CometChatLayoutProps) {
   return (
-    <div className="flex h-screen w-full overflow-hidden bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-50 font-sans">
-      {/* Mobile Sidebar Overlay */}
-      {showSidebarMobile && (
-        <div 
-          className="fixed inset-0 z-40 bg-black/50 md:hidden"
-          onClick={onToggleSidebar}
-        />
-      )}
+    <div className="room-shell flex h-screen w-full overflow-hidden bg-[#09090b] text-[#fafafa] [font-family:Space_Grotesk,_Inter,_sans-serif]">
+      {showSidebarMobile ? (
+        <div className="fixed inset-0 z-40 bg-black/70 backdrop-blur-sm md:hidden" onClick={onToggleSidebar} />
+      ) : null}
 
-      {/* Sidebar */}
-      <aside 
+      <aside
         className={cn(
-          "fixed inset-y-0 left-0 z-50 w-80 bg-white dark:bg-slate-900 border-r border-slate-200 dark:border-slate-800 transform transition-transform duration-300 ease-in-out md:relative md:translate-x-0 flex flex-col",
+          "fixed inset-y-0 left-0 z-50 flex w-[22rem] flex-col border-r-2 border-[#3f3f46] bg-[#0f1013] transition-transform duration-300 ease-out md:relative md:translate-x-0",
           showSidebarMobile ? "translate-x-0" : "-translate-x-full"
         )}
       >
         {sidebar}
       </aside>
 
-      {/* Main Chat Area */}
-      <main className="flex-1 flex flex-col relative min-w-0 bg-white/50 dark:bg-slate-950/50 backdrop-blur-sm">
-        {children}
+      <main className="relative flex min-w-0 flex-1 flex-col bg-[#09090b]">
+        <div aria-hidden="true" className="pointer-events-none absolute inset-0 opacity-[0.14]"
+          style={{
+            backgroundImage:
+              "linear-gradient(rgba(63,63,70,0.32) 1px, transparent 1px), linear-gradient(90deg, rgba(63,63,70,0.32) 1px, transparent 1px)",
+            backgroundSize: "36px 36px",
+          }}
+        />
+        <div className="relative z-10 flex min-h-0 flex-1 flex-col">{children}</div>
       </main>
 
-      {/* Right Details Panel (Desktop Only) */}
-      {details && (
-        <aside className="hidden xl:flex w-80 bg-white dark:bg-slate-900 border-l border-slate-200 dark:border-slate-800 flex-col">
-          {details}
-        </aside>
-      )}
+      {details ? (
+        <aside className="hidden w-80 border-l-2 border-[#3f3f46] bg-[#0f1013] xl:flex xl:flex-col">{details}</aside>
+      ) : null}
     </div>
   );
 }

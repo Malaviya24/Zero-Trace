@@ -1,32 +1,45 @@
-import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import { api } from "@/convex/_generated/api";
+import { SiteButton, SiteInput, SitePanel } from "@/components/site/SitePrimitives";
 import { ChatCrypto } from "@/lib/crypto";
 import { motion } from "framer-motion";
-import {
-  Shield,
-  AlertTriangle,
-  ArrowRight,
-  Loader2,
-} from "lucide-react";
-import { useState, useEffect } from "react";
-import { useQuery, useMutation } from "@/lib/convex-helpers";
+import { AlertTriangle, ArrowRight, Loader2, Shield } from "lucide-react";
+import { useEffect, useState, type ComponentProps, type ReactNode } from "react";
+import { useLocation, useNavigate, useParams } from "react-router";
 import { toast } from "sonner";
-import { useNavigate, useParams, useLocation } from "react-router";
+
 import CometChatRoom from "@/components/cometchat/CometChatRoom";
-import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import { useRoomSession } from "@/hooks/useRoomSession";
 import { LoadingScreen } from "@/components/LoadingScreen";
+import { useRoomSession } from "@/hooks/useRoomSession";
+import { useMutation, useQuery } from "@/lib/convex-helpers";
 import { isRoomFullError, mapJoinRoomErrorMessage } from "@/lib/room-capacity";
+
+function Surface({ children }: { children: ReactNode }) {
+  return <div className="relative min-h-dvh">{children}</div>;
+}
+
+function Panel({ children, className = "" }: { children: ReactNode; className?: string }) {
+  return <SitePanel className={className}>{children}</SitePanel>;
+}
+
+function KineticInput(props: ComponentProps<typeof SiteInput>) {
+  return (
+    <SiteInput
+      {...props}
+      className={[
+        "h-14 text-base tracking-[0.03em] placeholder:tracking-[0.12em] sm:h-16 sm:text-lg md:text-2xl",
+        props.className,
+      ]
+        .filter(Boolean)
+        .join(" ")}
+    />
+  );
+}
 
 export default function JoinRoom() {
   const navigate = useNavigate();
   const { roomId } = useParams<{ roomId: string }>();
   const location = useLocation();
   const [password, setPassword] = useState("");
-
   const [displayName, setDisplayName] = useState("");
   const [avatar, setAvatar] = useState("");
   const [isJoining, setIsJoining] = useState(false);
@@ -36,38 +49,38 @@ export default function JoinRoom() {
   const [manualKeySet, setManualKeySet] = useState(false);
   const [participantId, setParticipantId] = useState<string | null>(null);
   const [participantToken, setParticipantToken] = useState<string | null>(null);
-  
+
   const room = useQuery((api as any).rooms.getRoomByRoomId, roomId ? { roomId } : "skip");
   const capacity = useQuery((api as any).rooms.getJoinCapacity, roomId ? { roomId } : "skip");
   const joinRoomMutation = useMutation((api as any).rooms.joinRoom);
   const purgeIfExpiredMutation = useMutation((api as any).rooms.purgeIfExpired);
-
-  // Use the new OOP service layer for session management
   const { roomService, isRestoring, sessionData, hasUrlKey } = useRoomSession(roomId, location.hash);
 
-  // Sync session data to component state
   useEffect(() => {
     if (sessionData) {
       setDisplayName(sessionData.displayName);
       setAvatar(sessionData.avatar);
       setEncryptionKey(sessionData.encryptionKey);
-      
+
       if (sessionData.participantId) {
         setParticipantId(sessionData.participantId);
         setParticipantToken(sessionData.participantToken);
         setHasJoined(true);
       }
+      return;
     }
+
+    setDisplayName((current) => current || ChatCrypto.generateAnonymousName());
+    setAvatar((current) => current || ChatCrypto.generateAvatar());
   }, [sessionData]);
 
   useEffect(() => {
     if (!roomId) return;
     purgeIfExpiredMutation({ roomId }).catch(() => {
-      // Best-effort purge trigger. Join/query flows still handle expired rooms.
+      // Best-effort purge trigger.
     });
   }, [roomId, purgeIfExpiredMutation]);
 
-  // ADD: handler to manually import key using EncryptionService
   const handleImportKey = async () => {
     try {
       if (!manualKeyInput.trim() || !roomService) {
@@ -78,8 +91,8 @@ export default function JoinRoom() {
       setEncryptionKey(key);
       setManualKeySet(true);
       toast.success("Room key imported.");
-    } catch (e) {
-      console.error("Failed to import key:", e);
+    } catch (error) {
+      console.error("Failed to import key:", error);
       toast.error("Invalid key. Ensure you pasted the full exported key string.");
     }
   };
@@ -93,16 +106,15 @@ export default function JoinRoom() {
       toast.error("Room is full. Try later or ask admin to increase limit.");
       return;
     }
-
     if (!hasUrlKey && !manualKeySet) {
       toast.error("Missing room key. Paste the key or use the invite link with #k= fragment.");
       return;
     }
 
     setIsJoining(true);
-    
+
     try {
-      let computedPasswordHash: string | undefined = undefined;
+      let computedPasswordHash: string | undefined;
       if (room?.hasPassword) {
         if (!password) {
           toast.error("Password required to join this room");
@@ -113,7 +125,6 @@ export default function JoinRoom() {
         computedPasswordHash = hash;
       }
 
-      // Capture returned participant id
       const joinResult = await joinRoomMutation({
         roomId,
         displayName: displayName.trim(),
@@ -127,18 +138,17 @@ export default function JoinRoom() {
         throw new Error("Failed to join room: No participant ID returned");
       }
 
-      setParticipantId(pid as unknown as string);
+      setParticipantId(pid as string);
       setParticipantToken(token);
       setHasJoined(true);
-      
-      // Use RoomService to save session
+
       await roomService.saveSession({
         displayName: displayName.trim(),
         avatar,
         participantId: pid as string,
         participantToken: token,
       });
-      
+
       toast.success("Joined room successfully!");
     } catch (error) {
       console.error("Join room error:", error);
@@ -158,20 +168,18 @@ export default function JoinRoom() {
 
   if (!roomId) {
     return (
-      <div className="min-h-screen flex items-center justify-center">
-        <Card className="w-96">
-          <CardContent className="p-6 text-center">
-            <AlertTriangle className="h-12 w-12 mx-auto mb-4 text-destructive" />
-            <h2 className="text-xl font-bold mb-2">Invalid Room</h2>
-            <p className="text-muted-foreground mb-4">
-              No room ID provided in the URL.
-            </p>
-            <Button onClick={() => navigate("/")} className="w-full">
-              Return Home
-            </Button>
-          </CardContent>
-        </Card>
-      </div>
+      <Surface>
+        <div className="flex min-h-dvh items-center justify-center px-4 py-10">
+          <Panel className="w-full max-w-2xl p-8 text-center md:p-12">
+            <AlertTriangle className="mx-auto h-12 w-12 text-accent" />
+            <h2 className="mt-6 text-[clamp(2rem,6vw,4rem)] font-bold uppercase leading-[0.85] tracking-[-0.06em]">Invalid room</h2>
+            <p className="mt-4 text-lg text-muted-foreground">No room ID was provided in the URL.</p>
+            <SiteButton type="button" onClick={() => navigate("/")} className="mt-8">
+              Return home
+            </SiteButton>
+          </Panel>
+        </div>
+      </Surface>
     );
   }
 
@@ -191,7 +199,7 @@ export default function JoinRoom() {
     return (
       <LoadingScreen
         variant="page"
-        message={isRestoring ? "Restoring your session..." : "Loading room..."}
+        message={isRestoring ? "Restoring your session" : "Loading room"}
         submessage={isRestoring ? "Reconnecting you securely" : "Fetching room details"}
       />
     );
@@ -199,186 +207,179 @@ export default function JoinRoom() {
 
   if (room === null) {
     return (
-      <div className="min-h-screen flex items-center justify-center">
-        <Card className="w-96">
-          <CardContent className="p-6 text-center">
-            <AlertTriangle className="h-12 w-12 mx-auto mb-4 text-destructive" />
-            <h2 className="text-xl font-bold mb-2">Room Not Found</h2>
-            <p className="text-muted-foreground mb-4">
-              This room may have expired or doesn't exist.
-            </p>
-            <Button onClick={() => navigate("/")} className="w-full">
-              Return Home
-            </Button>
-          </CardContent>
-        </Card>
-      </div>
+      <Surface>
+        <div className="flex min-h-dvh items-center justify-center px-4 py-10">
+          <Panel className="w-full max-w-2xl p-8 text-center md:p-12">
+            <AlertTriangle className="mx-auto h-12 w-12 text-accent" />
+            <h2 className="mt-6 text-[clamp(2rem,6vw,4rem)] font-bold uppercase leading-[0.85] tracking-[-0.06em]">Room not found</h2>
+            <p className="mt-4 text-lg text-muted-foreground">This room may have expired or no longer exists.</p>
+            <SiteButton type="button" onClick={() => navigate("/")} className="mt-8">
+              Return home
+            </SiteButton>
+          </Panel>
+        </div>
+      </Surface>
     );
   }
 
   return (
-    <div className="min-h-screen flex items-center justify-center p-4">
-      <motion.div
-        initial={{ opacity: 0, y: 20 }}
-        animate={{ opacity: 1, y: 0 }}
-        className="w-full max-w-md"
-      >
-        <Card>
-          <CardHeader className="text-center">
-            <div className="w-12 h-12 bg-primary/10 rounded-full flex items-center justify-center mx-auto mb-4">
-              <Shield className="h-6 w-6 text-primary" />
+    <Surface>
+      <div className="mx-auto max-w-[95vw] px-4 py-8 sm:py-10 md:px-8 md:py-14">
+        <motion.div initial={{ opacity: 0, y: 18 }} animate={{ opacity: 1, y: 0 }} className="space-y-8">
+          <div className="grid gap-px bg-border lg:grid-cols-[0.92fr_1.08fr]">
+            <div className="bg-background p-6 sm:p-8 md:p-12 lg:p-16">
+              <p className="site-kicker text-accent">Room access</p>
+              <h1 className="mt-4 text-[clamp(2.8rem,9vw,7rem)] font-bold uppercase leading-[0.8] tracking-[-0.08em]">
+                Join room {roomId}
+              </h1>
+              <p className="mt-5 text-lg text-muted-foreground md:text-xl">{room.name || "Secure chat room"}</p>
+
+              <div className="mt-8 space-y-3 border-t-2 border-border pt-6">
+                <div className="flex items-center justify-between text-sm uppercase tracking-[0.16em] text-muted-foreground">
+                  <span>Max participants</span>
+                  <span className="text-foreground">{capacity?.maxParticipants ?? room.maxParticipants ?? 10}</span>
+                </div>
+                <div className="flex items-center justify-between text-sm uppercase tracking-[0.16em] text-muted-foreground">
+                  <span>Active now</span>
+                  <span className="text-foreground">{capacity?.activeCount ?? 0}</span>
+                </div>
+                <div className="flex items-center justify-between text-sm uppercase tracking-[0.16em] text-muted-foreground">
+                  <span>Password</span>
+                  <span className="text-foreground">{room.hasPassword ? "Required" : "Open"}</span>
+                </div>
+              </div>
             </div>
-            <CardTitle>Join Room {roomId}</CardTitle>
-            <p className="text-sm text-muted-foreground">
-              {room.name || "Secure Chat Room"}
-            </p>
-          </CardHeader>
-          
-          <CardContent className="space-y-4">
-            {/* ADD: Missing Key Warning */}
-            {!hasUrlKey && !manualKeySet && (
-              <Alert variant="destructive">
-                <AlertTitle>Room key required</AlertTitle>
-                <AlertDescription>
-                  This link does not include the room key (#k=...). You won't be able to read messages.
-                  Paste the key below or ask for the invite link that includes the key.
-                </AlertDescription>
-                <div className="mt-3 flex gap-2">
-                  <Input
-                    value={manualKeyInput}
-                    onChange={(e) => setManualKeyInput(e.target.value)}
-                    placeholder="Paste exported key"
-                    aria-label="Paste exported room key"
+
+            <div className="bg-muted p-6 sm:p-8 md:p-12 lg:p-16">
+              <div className="space-y-6">
+                {!hasUrlKey && !manualKeySet ? (
+                  <Panel className="bg-background p-4">
+                    <p className="text-xs font-bold uppercase tracking-[0.24em] text-accent">Room key required</p>
+                    <p className="mt-3 text-sm text-muted-foreground">
+                      This invite does not include the room key fragment. Paste the exported key below or ask for the complete invite link.
+                    </p>
+                    <div className="mt-4 flex flex-col gap-3 sm:flex-row">
+                      <KineticInput
+                        value={manualKeyInput}
+                        onChange={(event) => setManualKeyInput(event.target.value)}
+                        placeholder="Paste exported key"
+                        aria-label="Paste exported room key"
+                        displayUppercase={false}
+                        className="h-14 flex-1 text-sm normal-case tracking-normal"
+                      />
+                      <SiteButton type="button" variant="outline" size="default" onClick={handleImportKey} className="h-14 px-5">
+                        Import key
+                      </SiteButton>
+                    </div>
+                  </Panel>
+                ) : null}
+
+                {capacity?.isFull ? (
+                  <Panel className="bg-background p-4">
+                    <p className="text-xs font-bold uppercase tracking-[0.24em] text-accent">Room full</p>
+                    <p className="mt-3 text-sm text-muted-foreground">
+                      This room is currently at capacity ({capacity.activeCount}/{capacity.maxParticipants}). Try again later or ask the admin to increase room size.
+                    </p>
+                  </Panel>
+                ) : null}
+
+                <Panel className="bg-background p-4">
+                  <div className="flex flex-col gap-4 sm:flex-row sm:items-center">
+                    <div className="flex h-16 w-16 items-center justify-center border-2 border-border bg-muted text-3xl">{avatar}</div>
+                    <div className="min-w-0 flex-1">
+                      <p className="text-xs font-bold uppercase tracking-[0.24em] text-muted-foreground">Anonymous identity</p>
+                      <p className="mt-2 truncate text-xl font-bold uppercase tracking-[-0.04em] text-foreground">{displayName}</p>
+                    </div>
+                    <SiteButton
+                      variant="outline"
+                      size="sm"
+                      onClick={handleRegenerateIdentity}
+                      className="w-full bg-transparent text-foreground hover:bg-muted sm:w-auto"
+                    >
+                      Regenerate
+                    </SiteButton>
+                  </div>
+                </Panel>
+
+                <div>
+                  <label htmlFor="displayName" className="text-xs font-bold uppercase tracking-[0.24em] text-muted-foreground">
+                    Display name
+                  </label>
+                  <KineticInput
+                    id="displayName"
+                    autoComplete="username"
+                    value={displayName}
+                    onChange={(event) => setDisplayName(event.target.value)}
+                    placeholder="Enter your display name"
+                    maxLength={30}
                   />
-                  <Button onClick={handleImportKey} aria-label="Import room key">Import</Button>
                 </div>
-              </Alert>
-            )}
 
-            {/* Room Info */}
-            <div className="bg-muted/50 rounded-lg p-3 space-y-2">
-              <div className="flex items-center justify-between text-sm">
-                <span className="text-muted-foreground">Max Participants:</span>
-                <span>{capacity?.maxParticipants ?? room.maxParticipants ?? 10}</span>
-              </div>
-              <div className="flex items-center justify-between text-sm">
-                <span className="text-muted-foreground">Active Now:</span>
-                <span>{capacity?.activeCount ?? 0}</span>
-              </div>
-              <div className="flex items-center justify-between text-sm">
-                <span className="text-muted-foreground">Password Protected:</span>
-                <span>{room.hasPassword ? "Yes" : "No"}</span>
-              </div>
-            </div>
-            {capacity?.isFull ? (
-              <Alert variant="destructive">
-                <AlertTitle>Room is full</AlertTitle>
-                <AlertDescription>
-                  This room is currently at capacity ({capacity.activeCount}/{capacity.maxParticipants}).
-                  Try again later or ask the admin to increase room size.
-                </AlertDescription>
-              </Alert>
-            ) : null}
+                {room.hasPassword ? (
+                  <div>
+                    <label htmlFor="password" className="text-xs font-bold uppercase tracking-[0.24em] text-muted-foreground">
+                      Room password
+                    </label>
+                    <KineticInput
+                      id="password"
+                      type="password"
+                      autoComplete="current-password"
+                      value={password}
+                      onChange={(event) => setPassword(event.target.value)}
+                      placeholder="Enter room password"
+                      required
+                      displayUppercase={false}
+                      className="normal-case"
+                    />
+                  </div>
+                ) : null}
 
-            {/* Anonymous Identity */}
-            <div className="space-y-3">
-              <Label>Your Anonymous Identity</Label>
-              <div className="flex items-center gap-3 p-3 bg-muted/50 rounded-lg">
-                <span className="text-2xl">{avatar}</span>
-                <div className="flex-1">
-                  <p className="font-medium">{displayName}</p>
-                  <p className="text-xs text-muted-foreground">
-                    Anonymous • No data stored
-                  </p>
-                </div>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={handleRegenerateIdentity}
-                >
-                  Regenerate
-                </Button>
-              </div>
-            </div>
+                <Panel className="bg-background p-4">
+                  <div className="flex items-start gap-3">
+                    <Shield className="mt-0.5 h-5 w-5 text-accent" />
+                    <div>
+                      <p className="text-xs font-bold uppercase tracking-[0.24em] text-accent">Encrypted room surface</p>
+                      <p className="mt-2 text-sm text-muted-foreground">
+                        Messages are encrypted on-device, room access is session-based, and inactive rooms expire automatically.
+                      </p>
+                    </div>
+                  </div>
+                </Panel>
 
-            {/* Custom Display Name */}
-            <div>
-              <Label htmlFor="displayName">Display Name</Label>
-              <Input
-                id="displayName"
-                autoComplete="username"
-                value={displayName}
-                onChange={(e) => setDisplayName(e.target.value)}
-                placeholder="Enter your display name"
-                maxLength={30}
-              />
-            </div>
+                <div className="flex flex-col gap-3">
+                  <SiteButton
+                    type="button"
+                    onClick={handleJoinRoom}
+                    disabled={
+                      isJoining ||
+                      !displayName.trim() ||
+                      (!!room?.hasPassword && !password) ||
+                      (!hasUrlKey && !manualKeySet) ||
+                      !!capacity?.isFull
+                    }
+                    className="h-14"
+                  >
+                    {isJoining ? <Loader2 className="h-4 w-4 animate-spin" /> : <ArrowRight className="h-4 w-4" />}
+                    {isJoining ? "Joining room" : "Join secure room"}
+                  </SiteButton>
 
-            {/* Password (if required) */}
-            {room.hasPassword && (
-              <div>
-                <Label htmlFor="password">Room Password</Label>
-                <Input
-                  id="password"
-                  type="password"
-                  autoComplete="current-password"
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  placeholder="Enter room password"
-                  required
-                />
-              </div>
-            )}
-
-            {/* Security Notice */}
-            <div className="bg-primary/5 border border-primary/20 rounded-lg p-3">
-              <div className="flex items-start gap-2">
-                <Shield className="h-4 w-4 text-primary mt-0.5" />
-                <div className="text-xs space-y-1">
-                  <p className="font-medium text-primary">End-to-End Encrypted</p>
-                  <p className="text-muted-foreground">
-                    Messages are encrypted on your device. No data is permanently stored.
-                    Room expires in 2 hours.
-                  </p>
+                  <SiteButton
+                    type="button"
+                    variant="outline"
+                    size="default"
+                    onClick={() => navigate("/")}
+                    className="min-h-11 w-full bg-transparent"
+                    aria-label="Back to home"
+                  >
+                    Back to home
+                  </SiteButton>
                 </div>
               </div>
             </div>
-
-            <Button
-              onClick={handleJoinRoom}
-              disabled={
-                isJoining ||
-                !displayName.trim() ||
-                (!!room?.hasPassword && !password) ||
-                (!hasUrlKey && !manualKeySet) ||
-                !!capacity?.isFull
-              }
-              className="w-full"
-            >
-              {isJoining ? (
-                <>
-                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                  Joining Room...
-                </>
-              ) : (
-                <>
-                  Join Secure Room
-                  <ArrowRight className="ml-2 h-4 w-4" />
-                </>
-              )}
-            </Button>
-
-            <Button
-              variant="outline"
-              onClick={() => navigate("/")}
-              className="w-full"
-              aria-label="Back to Home"
-            >
-              Back to Home
-            </Button>
-          </CardContent>
-        </Card>
-      </motion.div>
-    </div>
+          </div>
+        </motion.div>
+      </div>
+    </Surface>
   );
 }
+

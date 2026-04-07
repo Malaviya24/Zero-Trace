@@ -1,39 +1,37 @@
 import { useState } from "react";
 import { motion } from "framer-motion";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { useNavigate } from "react-router";
+import { ArrowRight } from "lucide-react";
+
+import { SiteButton, SiteInput, SitePanel } from "@/components/site/SitePrimitives";
 import { useAuth } from "@/hooks/use-auth";
-import { ArrowRight, Sparkles, User } from "lucide-react";
 
 const AVATARS = [
-  "👨‍💻", "👩‍💻", "🕵️", "🦸", "🦹", "🧟", "🧛", "🧞", "🧝", "🧚",
-  "🐶", "🐱", "🦊", "🐻", "🐼", "🐨", "🐯", "🦁", "🐮", "🐷"
+  "\u{1F575}\uFE0F",
+  "\u{1F680}",
+  "\u{1F6E1}\uFE0F",
+  "\u{1F47E}",
+  "\u{1F9E0}",
+  "\u{1F916}",
+  "\u{1F98A}",
+  "\u{1F43A}",
+  "\u{1F52E}",
+  "\u{1F3A7}",
 ];
 
 export default function ProfileSetup() {
   const navigate = useNavigate();
   const { user } = useAuth();
   const [name, setName] = useState(user?.name || "");
-  const [selectedAvatar, setSelectedAvatar] = useState(user?.image || "🕵️");
+  const [selectedAvatar, setSelectedAvatar] = useState(user?.image || AVATARS[0]);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   const handleContinue = async () => {
     if (!name.trim()) return;
     setIsSubmitting(true);
     try {
-      // Simulate saving profile or actually update user if auth supports it
-      // For anonymous auth, we might just store in local storage or update context
-      // Assuming signIn or similar updates the context/backend
-      // For this demo, we'll assume successful local state update and navigate
       localStorage.setItem("user_name", name);
       localStorage.setItem("user_avatar", selectedAvatar);
-      
-      // If we have a backend update mutation, call it here
-      // await updateProfile({ name, image: selectedAvatar });
-
       navigate("/dashboard");
     } catch (error) {
       console.error("Failed to setup profile:", error);
@@ -43,54 +41,45 @@ export default function ProfileSetup() {
   };
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-background via-muted/50 to-background flex items-center justify-center p-4">
-      <motion.div
-        initial={{ opacity: 0, scale: 0.95 }}
-        animate={{ opacity: 1, scale: 1 }}
-        transition={{ duration: 0.5 }}
-        className="w-full max-w-md"
-      >
-        <Card className="border-primary/10 shadow-2xl bg-card/50 backdrop-blur-xl">
-          <CardHeader className="text-center space-y-2">
-            <div className="mx-auto w-12 h-12 rounded-full bg-primary/10 flex items-center justify-center mb-4">
-              <Sparkles className="w-6 h-6 text-primary" />
-            </div>
-            <CardTitle className="text-3xl font-bold tracking-tight">
-              Create Your Persona
-            </CardTitle>
-            <p className="text-muted-foreground">
-              Choose how you appear in the Zero Trace network.
-            </p>
-          </CardHeader>
-          <CardContent className="space-y-8">
-            {/* Avatar Selection */}
-            <div className="space-y-4">
-              <div className="flex justify-center">
-                <motion.div
-                  key={selectedAvatar}
-                  initial={{ scale: 0.8, rotate: -10 }}
-                  animate={{ scale: 1, rotate: 0 }}
-                  className="relative"
-                >
-                  <Avatar className="w-32 h-32 border-4 border-primary/20 shadow-xl">
-                    <AvatarImage src="" /> {/* Using emoji as image for now */}
-                    <AvatarFallback className="text-6xl bg-secondary">
-                      {selectedAvatar}
-                    </AvatarFallback>
-                  </Avatar>
-                  <div className="absolute bottom-0 right-0 bg-primary text-primary-foreground p-2 rounded-full shadow-lg">
-                    <User className="w-4 h-4" />
-                  </div>
-                </motion.div>
+    <div className="mx-auto max-w-[95vw] px-4 py-8 sm:py-10 md:px-8 md:py-14">
+      <div className="grid gap-px bg-border lg:grid-cols-[0.9fr_1.1fr]">
+        <div className="bg-background p-6 sm:p-8 md:p-12 lg:p-16">
+          <p className="site-kicker text-accent">Profile shell</p>
+          <h1 className="mt-4 text-[clamp(2.6rem,11vw,8rem)] font-bold uppercase leading-[0.82] tracking-[-0.08em]">
+            Build the persona that enters the room.
+          </h1>
+          <p className="mt-5 max-w-xl text-base text-muted-foreground sm:text-lg md:text-2xl">
+            Pick a signal mark and a display name. The room stays anonymous, but people still need something to recognize.
+          </p>
+        </div>
+
+        <SitePanel className="bg-muted p-6 sm:p-8 md:p-12 lg:p-16">
+          <div className="space-y-6 sm:space-y-8">
+            <div className="flex flex-col gap-5 border-b-2 border-border pb-6 sm:flex-row sm:items-center sm:gap-6">
+              <motion.div
+                key={selectedAvatar}
+                initial={{ rotate: -8, scale: 0.92, opacity: 0.6 }}
+                animate={{ rotate: 0, scale: 1, opacity: 1 }}
+                className="flex h-24 w-24 items-center justify-center border-2 border-border bg-background text-5xl sm:h-28 sm:w-28 sm:text-6xl"
+              >
+                {selectedAvatar}
+              </motion.div>
+              <div className="min-w-0">
+                <p className="text-[0.68rem] font-bold uppercase tracking-[0.2em] text-muted-foreground sm:text-xs sm:tracking-[0.24em]">Live preview</p>
+                <p className="mt-3 text-2xl font-bold uppercase tracking-[-0.05em] sm:text-3xl break-words">{name.trim() || "Unnamed operator"}</p>
               </div>
-              
-              <div className="grid grid-cols-5 gap-2 p-2 bg-muted/30 rounded-xl">
+            </div>
+
+            <div>
+              <p className="text-[0.68rem] font-bold uppercase tracking-[0.2em] text-muted-foreground sm:text-xs sm:tracking-[0.24em]">Choose an avatar</p>
+              <div className="mt-4 grid grid-cols-5 gap-px bg-border">
                 {AVATARS.map((avatar) => (
                   <button
                     key={avatar}
+                    type="button"
                     onClick={() => setSelectedAvatar(avatar)}
-                    className={`text-2xl p-2 rounded-lg transition-all hover:bg-background/80 hover:scale-110 ${
-                      selectedAvatar === avatar ? "bg-background shadow-md scale-110 ring-2 ring-primary/20" : "opacity-70"
+                    className={`site-focus flex aspect-square items-center justify-center bg-background text-2xl transition-colors sm:text-3xl ${
+                      selectedAvatar === avatar ? "bg-accent text-black" : "text-foreground hover:bg-muted"
                     }`}
                   >
                     {avatar}
@@ -99,29 +88,26 @@ export default function ProfileSetup() {
               </div>
             </div>
 
-            {/* Name Input */}
-            <div className="space-y-2">
-              <Input
-                placeholder="Enter your display name"
+            <div>
+              <label htmlFor="displayName" className="text-[0.68rem] font-bold uppercase tracking-[0.2em] text-muted-foreground sm:text-xs sm:tracking-[0.24em]">
+                Display name
+              </label>
+              <SiteInput
+                id="displayName"
+                placeholder="Type your handle"
                 value={name}
-                onChange={(e) => setName(e.target.value)}
-                className="h-12 text-lg text-center bg-background/50 border-primary/10 focus:border-primary/30 transition-all"
+                onChange={(event) => setName(event.target.value)}
                 autoFocus
               />
             </div>
 
-            <Button
-              size="lg"
-              className="w-full h-12 text-lg font-medium shadow-lg shadow-primary/20 transition-all hover:scale-[1.02]"
-              onClick={handleContinue}
-              disabled={!name.trim() || isSubmitting}
-            >
-              {isSubmitting ? "Setting up..." : "Enter the Network"}
-              <ArrowRight className="ml-2 w-5 h-5" />
-            </Button>
-          </CardContent>
-        </Card>
-      </motion.div>
+            <SiteButton size="lg" onClick={handleContinue} disabled={!name.trim() || isSubmitting} className="w-full sm:w-auto">
+              {isSubmitting ? "Saving profile" : "Enter dashboard"}
+              <ArrowRight className="h-5 w-5" />
+            </SiteButton>
+          </div>
+        </SitePanel>
+      </div>
     </div>
   );
 }

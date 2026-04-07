@@ -1,11 +1,9 @@
-import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import { ArrowLeft, ArrowRight, Loader2 } from "lucide-react";
 import { motion } from "framer-motion";
-import { useState, useEffect } from "react";
+import { useEffect, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router";
+
+import { SiteButton, SiteInput, SitePanel } from "@/components/site/SitePrimitives";
 
 export default function JoinRoomPage() {
   const navigate = useNavigate();
@@ -21,77 +19,74 @@ export default function JoinRoomPage() {
   }, [searchParams]);
 
   return (
-    <div className="min-h-screen relative overflow-hidden">
-      <div className="pointer-events-none absolute inset-0">
-        <div className="absolute -top-24 -left-24 h-96 w-96 rounded-full bg-primary/10 blur-3xl" />
-        <div className="absolute -bottom-24 -right-24 h-96 w-96 rounded-full bg-primary/5 blur-3xl" />
-      </div>
+    <div className="min-h-dvh bg-[#09090b] text-[#fafafa] [font-family:Space_Grotesk,_Inter,_sans-serif]">
+      <div
+        aria-hidden="true"
+        className="pointer-events-none fixed inset-0 opacity-[0.14]"
+        style={{
+          backgroundImage:
+            "linear-gradient(rgba(63,63,70,0.28) 1px, transparent 1px), linear-gradient(90deg, rgba(63,63,70,0.28) 1px, transparent 1px)",
+          backgroundSize: "36px 36px",
+        }}
+      />
 
-      <div className="relative z-10 max-w-2xl mx-auto px-4 py-8 sm:py-12">
-        <motion.div
-          initial={{ opacity: 0, y: 12 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.4, ease: "easeOut" }}
-          className="space-y-6"
-        >
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={() => navigate("/")}
-            className="gap-2 text-muted-foreground hover:text-foreground"
-          >
+      <div className="relative mx-auto max-w-[95vw] px-4 py-8 sm:py-10 md:px-8 md:py-14">
+        <motion.div initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} className="space-y-6 sm:space-y-8">
+          <SiteButton type="button" variant="outline" size="sm" onClick={() => navigate("/")} className="self-start bg-transparent text-muted-foreground hover:bg-muted hover:text-foreground">
             <ArrowLeft className="h-4 w-4" />
             Back
-          </Button>
+          </SiteButton>
 
-          <Card className="glass border-primary/10 shadow-xl shadow-primary/5">
-            <CardHeader>
-              <CardTitle className="text-2xl font-bold gradient-text">Join a Room</CardTitle>
-              <p className="text-sm text-muted-foreground">
-                Enter the Room ID to join a secure chat
+          <div className="grid gap-px bg-[#3f3f46] lg:grid-cols-[0.95fr_1.05fr]">
+            <div className="bg-[#09090b] p-6 sm:p-8 md:p-12 lg:p-16">
+              <p className="text-[0.68rem] font-bold uppercase tracking-[0.24em] text-[#dfe104] sm:text-xs sm:tracking-[0.28em]">Room entry</p>
+              <h1 className="mt-4 text-[clamp(2.6rem,11vw,8rem)] font-bold uppercase leading-[0.82] tracking-[-0.08em]">
+                Join by room id.
+              </h1>
+              <p className="mt-5 max-w-xl text-base text-[#a1a1aa] sm:text-lg md:text-xl">
+                Paste the active room code and move directly into the encrypted join flow.
               </p>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <div>
-                <Label htmlFor="joinRoomId">Room ID</Label>
-                <Input
-                  id="joinRoomId"
-                  placeholder="e.g. ABC12345"
-                  value={joinRoomId}
-                  onChange={(e) => setJoinRoomId(e.target.value.toUpperCase())}
-                  maxLength={20}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter" && joinRoomId.trim()) {
-                      setIsJoining(true);
-                      navigate(`/join/${joinRoomId.trim()}`);
-                    }
-                  }}
-                />
-              </div>
+            </div>
 
-              <Button
-                className="w-full"
-                disabled={isJoining || !joinRoomId.trim()}
-                onClick={() => {
-                  if (!joinRoomId.trim()) return;
-                  setIsJoining(true);
-                  navigate(`/join/${joinRoomId.trim()}`);
-                }}
-              >
-                {isJoining ? (
-                  <>
-                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                    Joining...
-                  </>
-                ) : (
-                  <>
-                    <ArrowRight className="mr-2 h-4 w-4" />
-                    Join Room
-                  </>
-                )}
-              </Button>
-            </CardContent>
-          </Card>
+            <SitePanel className="bg-[#18181b] p-6 sm:p-8 md:p-12 lg:p-16">
+              <div className="space-y-6 sm:space-y-8">
+                <div>
+                  <label htmlFor="joinRoomId" className="text-[0.68rem] font-bold uppercase tracking-[0.2em] text-[#a1a1aa] sm:text-xs sm:tracking-[0.24em]">
+                    Room id
+                  </label>
+                  <SiteInput
+                    id="joinRoomId"
+                    placeholder="ABC12345"
+                    value={joinRoomId}
+                    onChange={(event) => setJoinRoomId(event.target.value.toUpperCase())}
+                    maxLength={20}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter" && joinRoomId.trim()) {
+                        setIsJoining(true);
+                        navigate(`/join/${joinRoomId.trim()}`);
+                      }
+                    }}
+                    className="mt-3 h-16 text-2xl tracking-[-0.04em] placeholder:text-[#52525b] focus:border-[#dfe104] sm:h-18 md:h-20 md:text-3xl"
+                  />
+                </div>
+
+                <SiteButton
+                  type="button"
+                  size="lg"
+                  disabled={isJoining || !joinRoomId.trim()}
+                  onClick={() => {
+                    if (!joinRoomId.trim()) return;
+                    setIsJoining(true);
+                    navigate(`/join/${joinRoomId.trim()}`);
+                  }}
+                  className="w-full"
+                >
+                  {isJoining ? <Loader2 className="h-4 w-4 animate-spin" /> : <ArrowRight className="h-4 w-4" />}
+                  {isJoining ? "Joining" : "Join room"}
+                </SiteButton>
+              </div>
+            </SitePanel>
+          </div>
         </motion.div>
       </div>
     </div>

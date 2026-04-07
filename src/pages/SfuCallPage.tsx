@@ -4,8 +4,7 @@ import { Room, RoomEvent, Track } from "livekit-client";
 import { useMutation, useQuery } from "@/lib/convex-helpers";
 import { typedApi } from "@/lib/api-types";
 import { Id } from "@/convex/_generated/dataModel";
-import { Button } from "@/components/ui/button";
-import { Card, CardContent } from "@/components/ui/card";
+import { Button, Card, CardContent } from "@/components/app/AppUI";
 import { LoadingScreen } from "@/components/LoadingScreen";
 import { WhatsAppCallControls } from "@/components/call/WhatsAppCallControls";
 import { CONFIG } from "@/lib/config";
@@ -316,13 +315,13 @@ export default function SfuCallPage() {
 
   if (callPreflightError) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-background to-muted/20">
-        <Card className="w-96 shadow-lg border-destructive/20">
+      <div className="min-h-screen flex items-center justify-center bg-[#09090b] px-4 py-8 text-[#fafafa] [font-family:Space_Grotesk,_Inter,_sans-serif]">
+        <Card className="w-full max-w-2xl rounded-none border-2 border-[#3f3f46] bg-[#09090b] text-[#fafafa] shadow-none">
           <CardContent className="p-8 text-center">
-            <AlertTriangle className="mx-auto mb-4 h-8 w-8 text-destructive" />
-            <h2 className="text-2xl font-bold mb-2">Call Setup Required</h2>
-            <p className="text-muted-foreground mb-6 text-sm">{callPreflightError}</p>
-            <Button onClick={() => navigate(getReturnPath())} className="w-full"><ArrowLeft className="mr-2 h-4 w-4" />Return to Room</Button>
+            <AlertTriangle className="mx-auto mb-4 h-8 w-8 text-[#dfe104]" />
+            <h2 className="mb-2 text-[clamp(2rem,6vw,4rem)] font-bold uppercase leading-[0.85] tracking-[-0.06em]">Call setup required</h2>
+            <p className="mb-6 text-sm uppercase tracking-[0.14em] text-[#a1a1aa]">{callPreflightError}</p>
+            <Button onClick={() => navigate(getReturnPath())} className="h-12 w-full rounded-none border-2 border-[#dfe104] bg-[#dfe104] text-xs font-bold uppercase tracking-[0.18em] text-black shadow-none hover:bg-[#d3d53c]"><ArrowLeft className="mr-2 h-4 w-4" />Return to room</Button>
           </CardContent>
         </Card>
       </div>
@@ -338,15 +337,15 @@ export default function SfuCallPage() {
       <div className="flex-1 overflow-y-auto p-4">
         <div className="mx-auto grid max-w-[680px] gap-3 grid-cols-1 sm:grid-cols-2 lg:grid-cols-3">
           {remoteEntries.map(([participantId, media]) => (
-            <div key={participantId} className="relative aspect-[9/16] rounded-2xl border border-white/15 bg-white/5 overflow-hidden">
+            <div key={participantId} className="relative aspect-[9/16] overflow-hidden border-2 border-[#3f3f46] bg-[#111217]">
               <video ref={(el) => { if (el) remoteVideoRefs.current.set(participantId, el); }} autoPlay playsInline className="h-full w-full object-cover" />
               <audio ref={(el) => { if (el) remoteAudioRefs.current.set(participantId, el); }} autoPlay playsInline style={{ display: "none" }} />
-              <div className="absolute left-2 top-2 rounded-full bg-black/60 px-2 py-1 text-xs">{media.displayName}</div>
+              <div className="absolute left-2 top-2 border border-[#3f3f46] bg-[#09090b] px-2 py-1 text-[10px] font-bold uppercase tracking-[0.16em]">{media.displayName}</div>
             </div>
           ))}
-          <div className="relative aspect-[9/16] rounded-2xl border border-emerald-400/35 bg-emerald-500/10 overflow-hidden">
+          <div className="relative aspect-[9/16] overflow-hidden border-2 border-[#dfe104] bg-[#111217]">
             <video ref={localVideoRef} autoPlay muted playsInline className="h-full w-full object-cover scale-x-[-1]" />
-            <div className="absolute left-2 top-2 rounded-full bg-black/60 px-2 py-1 text-xs">You</div>
+            <div className="absolute left-2 top-2 border border-[#3f3f46] bg-[#dfe104] px-2 py-1 text-[10px] font-bold uppercase tracking-[0.16em] text-black">You</div>
           </div>
         </div>
       </div>
@@ -366,3 +365,7 @@ export default function SfuCallPage() {
     </div>
   );
 }
+
+
+
+

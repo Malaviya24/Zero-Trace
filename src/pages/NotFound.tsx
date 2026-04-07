@@ -1,108 +1,39 @@
-import { motion } from "framer-motion";
-import { Home, MessageCircle, ArrowLeft } from "lucide-react";
-import { Button } from "@/components/ui/button";
+import { ArrowLeft, Home } from "lucide-react";
 import { useNavigate } from "react-router";
+
+import { SiteButton } from "@/components/site/SitePrimitives";
 
 export default function NotFound() {
   const navigate = useNavigate();
 
   return (
-    <div className="min-h-screen relative overflow-hidden flex items-center justify-center bg-background">
-      <div className="pointer-events-none absolute inset-0">
-        <motion.div
-          animate={{ x: [0, 20, 0], y: [0, -15, 0] }}
-          transition={{ duration: 8, repeat: Infinity, ease: "easeInOut" }}
-          className="absolute top-1/4 -left-16 h-72 w-72 rounded-full bg-primary/8 blur-3xl"
-        />
-        <motion.div
-          animate={{ x: [0, -20, 0], y: [0, 20, 0] }}
-          transition={{ duration: 10, repeat: Infinity, ease: "easeInOut" }}
-          className="absolute bottom-1/4 -right-16 h-80 w-80 rounded-full bg-primary/6 blur-3xl"
-        />
-        <motion.div
-          animate={{ x: [0, 10, 0], y: [0, 10, 0] }}
-          transition={{ duration: 12, repeat: Infinity, ease: "easeInOut" }}
-          className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 h-64 w-64 rounded-full bg-primary/4 blur-3xl"
-        />
-      </div>
-
-      <div className="relative z-10 flex flex-col items-center justify-center px-6 text-center max-w-lg">
-        <motion.div
-          initial={{ scale: 0, rotate: -20 }}
-          animate={{ scale: 1, rotate: 0 }}
-          transition={{ type: "spring", stiffness: 200, damping: 15, delay: 0.1 }}
-          className="mb-8 relative"
-        >
-          <div className="h-28 w-28 rounded-3xl bg-gradient-to-br from-primary/15 to-primary/5 flex items-center justify-center border border-primary/10 shadow-lg shadow-primary/5">
-            <MessageCircle className="h-12 w-12 text-primary/60" />
+    <div className="mx-auto flex min-h-dvh max-w-[95vw] items-center px-4 py-8 sm:py-10 md:px-8 md:py-14">
+      <div className="grid w-full gap-px bg-border lg:grid-cols-[0.78fr_1.22fr]">
+        <div className="flex items-center justify-center bg-accent p-6 text-black sm:p-8 md:p-12">
+          <div>
+            <p className="text-[0.68rem] font-bold uppercase tracking-[0.24em] sm:text-xs sm:tracking-[0.32em]">Signal lost</p>
+            <p className="mt-4 text-[clamp(4.2rem,18vw,14rem)] font-bold leading-none tracking-[-0.12em]">404</p>
           </div>
-          <motion.div
-            initial={{ scale: 0 }}
-            animate={{ scale: 1 }}
-            transition={{ delay: 0.5, type: "spring", stiffness: 300 }}
-            className="absolute -top-2 -right-2 h-8 w-8 rounded-full bg-destructive/90 flex items-center justify-center shadow-md"
-          >
-            <span className="text-white text-xs font-bold">!</span>
-          </motion.div>
-        </motion.div>
-
-        <motion.div
-          initial={{ opacity: 0, y: 20 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.5, delay: 0.2 }}
-        >
-          <h1 className="gradient-text text-8xl sm:text-9xl font-extrabold tracking-tighter leading-none">
-            404
+        </div>
+        <div className="bg-background p-6 sm:p-8 md:p-12 lg:p-16">
+          <p className="site-kicker text-accent">Route missing</p>
+          <h1 className="mt-4 text-[clamp(2.6rem,11vw,8rem)] font-bold uppercase leading-[0.82] tracking-[-0.08em]">
+            The page burned out before you reached it.
           </h1>
-        </motion.div>
-
-        <motion.div
-          initial={{ opacity: 0, y: 15 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.5, delay: 0.35 }}
-          className="mt-4 space-y-2"
-        >
-          <h2 className="text-xl sm:text-2xl font-semibold text-foreground">
-            Page not found
-          </h2>
-          <p className="text-sm sm:text-base text-muted-foreground leading-relaxed max-w-sm mx-auto">
-            The page you're looking for doesn't exist or may have been moved. Let's get you back on track.
+          <p className="mt-5 max-w-2xl text-base text-muted-foreground sm:text-lg md:text-2xl">
+            The route you requested does not exist here anymore. Head back to the public entry or return to the last surface you trusted.
           </p>
-        </motion.div>
-
-        <motion.div
-          initial={{ opacity: 0, y: 15 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.5, delay: 0.5 }}
-          className="mt-10 flex flex-col sm:flex-row items-center gap-3 w-full sm:w-auto"
-        >
-          <Button
-            size="lg"
-            onClick={() => navigate("/")}
-            className="gap-2 w-full sm:w-auto rounded-xl h-12 px-8 shadow-lg shadow-primary/20"
-          >
-            <Home className="h-4 w-4" />
-            Back to Home
-          </Button>
-          <Button
-            size="lg"
-            variant="outline"
-            onClick={() => navigate(-1)}
-            className="gap-2 w-full sm:w-auto rounded-xl h-12 px-8"
-          >
-            <ArrowLeft className="h-4 w-4" />
-            Go Back
-          </Button>
-        </motion.div>
-
-        <motion.p
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          transition={{ delay: 0.7 }}
-          className="mt-12 text-xs text-muted-foreground/50"
-        >
-          Chattrix — Secure Anonymous Chat
-        </motion.p>
+          <div className="mt-8 flex flex-col gap-3 sm:flex-row sm:flex-wrap">
+            <SiteButton size="lg" onClick={() => navigate("/")} className="w-full sm:w-auto">
+              <Home className="h-5 w-5" />
+              Back to home
+            </SiteButton>
+            <SiteButton variant="outline" size="lg" onClick={() => navigate(-1)} className="w-full sm:w-auto">
+              <ArrowLeft className="h-5 w-5" />
+              Go back
+            </SiteButton>
+          </div>
+        </div>
       </div>
     </div>
   );

@@ -1,528 +1,418 @@
-import { Button } from "@/components/ui/button";
-import { Card, CardContent } from "@/components/ui/card";
-import {
-  Shield,
-  Eye,
-  Timer,
-  Key,
-  Zap,
-  Lock,
-  AlertTriangle,
-  ArrowRight,
-  Plus,
-  Loader2,
-  Sun,
-  Moon,
-  Menu,
-  ChevronDown,
-} from "lucide-react";
+import { AnimatePresence, motion, useReducedMotion, useScroll, useTransform } from "framer-motion";
+import { ArrowRight, ChevronDown, Lock, Shield, Timer, Zap } from "lucide-react";
+import { useMemo, useState } from "react";
 import { useNavigate } from "react-router";
-import { useState, useEffect } from "react";
-import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
 
-import { motion, AnimatePresence } from "framer-motion";
-import { QRScanner } from "@/components/QRScanner";
+import {
+  SiteBadge,
+  SiteButton,
+  SiteMarquee,
+  SitePanel,
+  SiteSectionHeading,
+} from "@/components/site/SitePrimitives";
+
+const featureCards = [
+  {
+    number: "01",
+    title: "Encrypted before send",
+    description:
+      "Keys live with the room, not the server. Messages are encrypted on-device before they leave the browser.",
+  },
+  {
+    number: "02",
+    title: "Rooms erase themselves",
+    description:
+      "Rooms expire after two hours and can run self-destructing message windows for tighter operational hygiene.",
+  },
+  {
+    number: "03",
+    title: "No identity ceremony",
+    description:
+      "Open a room, share the link, talk, leave. No signup queue, no profile wall, no persistent contact graph.",
+  },
+];
+
+const workflow = [
+  {
+    label: "Create",
+    body: "Spin up a room with a name, password, participant cap, and privacy settings in one pass.",
+  },
+  {
+    label: "Share",
+    body: "Send the invite link or QR entry point and keep the encryption key attached to the handoff.",
+  },
+  {
+    label: "Vanish",
+    body: "The room burns out on schedule so the conversation does not linger after the moment passes.",
+  },
+];
+
+const faqs = [
+  {
+    question: "Do I need an account?",
+    answer: "No. The flow is anonymous-first. Open a room and move immediately into the conversation.",
+  },
+  {
+    question: "Can the server read messages?",
+    answer: "No. Messages are encrypted before transport and decrypted on the participant side with the room key.",
+  },
+  {
+    question: "How long does data stay alive?",
+    answer: "Rooms expire after two hours, and optional self-destruct settings tighten message retention further.",
+  },
+  {
+    question: "What happens if I close the tab?",
+    answer: "Your session drops out, but the room keeps running until its expiry window or until the owner destroys it.",
+  },
+  {
+    question: "Can I join from phone or tablet?",
+    answer: "Yes. The interface is tuned for mobile, tablet, and desktop so the room handoff stays readable everywhere.",
+  },
+  {
+    question: "Can I move from chat to a call instantly?",
+    answer: "Yes. Rooms are built to escalate from text into voice or video without sending people through a second setup flow.",
+  },
+];
+
+const fieldNotes = [
+  ["Anonymous entry", "Share the room, not a profile. People arrive with room-scoped identity only."],
+  ["Mobile ready", "Invite links, controls, and retention settings stay readable on phones and tablets."],
+  ["Fast shutdown", "Owners can rely on expiry windows and destruction controls instead of lingering archives."],
+] as const;
+
+const heroSignals = [
+  ["No accounts", "Anonymous entry with room-scoped identity only"],
+  ["Fast invite", "Share by link or QR without setup ceremony"],
+  ["Short retention", "Rooms expire automatically after two hours"],
+  ["Direct controls", "Password gates, expiry rules, and kill switches"],
+] as const;
+
+const roomPreview = [
+  ["Access", "Link or QR handoff"],
+  ["Encryption", "Client-side before transit"],
+  ["Expiry", "Two hour room lifetime"],
+  ["Fallback", "Move from chat to call instantly"],
+] as const;
 
 export default function Landing() {
   const navigate = useNavigate();
-  const isOpeningCreate = false;
-  const [isDark, setIsDark] = useState<boolean>(false);
-  const [showQRScanner, setShowQRScanner] = useState(false);
-  const [openFaq, setOpenFaq] = useState<number | null>(null);
+  const reduceMotion = useReducedMotion();
+  const { scrollYProgress } = useScroll();
+  const heroScale = useTransform(scrollYProgress, [0, 0.18], reduceMotion ? [1, 1] : [1, 1.02]);
+  const heroOpacity = useTransform(scrollYProgress, [0, 0.18], reduceMotion ? [1, 1] : [1, 0.96]);
+  const [openFaq, setOpenFaq] = useState<number | null>(0);
 
-  useEffect(() => {
-    setIsDark(document.documentElement.classList.contains("dark"));
-  }, []);
+  const statItems = useMemo(
+    () => [
+      <><span className="site-number text-[clamp(3.5rem,9vw,7rem)] text-black">256</span><span>Bit AES pipeline</span></>,
+      <><span className="site-number text-[clamp(3.5rem,9vw,7rem)] text-black">02</span><span>Hour room lifetime</span></>,
+      <><span className="site-number text-[clamp(3.5rem,9vw,7rem)] text-black">00</span><span>Accounts required</span></>,
+      <><span className="site-number text-[clamp(3.5rem,9vw,7rem)] text-black">50</span><span>Message key rotation default</span></>,
+    ],
+    []
+  );
 
-  const toggleTheme = () => {
-    const next = !isDark;
-    setIsDark(next);
-    document.documentElement.classList.toggle("dark", next);
-    try {
-      localStorage.setItem("theme", next ? "dark" : "light");
-    } catch {
-      // ignore
-    }
-  };
-
-  const spotlightOpacity = 0.2;
-
-  const features = [
-    {
-      icon: Shield,
-      title: "End-to-End Encryption",
-      description: "AES-256 encryption with client-side key generation. Your messages are encrypted before leaving your device.",
-    },
-    {
-      icon: Timer,
-      title: "Ephemeral by Design",
-      description: "All data auto-expires in 2 hours. Self-destructing messages vanish 10 minutes after being read.",
-    },
-    {
-      icon: Eye,
-      title: "Zero Data Storage",
-      description: "No personal data ever stored. Anonymous identities with no registration required.",
-    },
-    {
-      icon: Key,
-      title: "Advanced Privacy",
-      description: "Panic mode (ESC key), automatic key rotation, and ephemeral messaging.",
-    },
-    {
-      icon: Zap,
-      title: "Real-time & Secure",
-      description: "Instant messaging with WebSocket connections. No server logs or message history.",
-    },
-    {
-      icon: Lock,
-      title: "Room Protection",
-      description: "Password-protected rooms with capacity limits. Share via QR codes or secure links.",
-    },
-  ];
-
-  const faqs = [
-    {
-      question: "Do I need to create an account?",
-      answer: "No. Zero-Trace is anonymous by default. Create a room and share the link—no sign-up required.",
-    },
-    {
-      question: "Are messages end-to-end encrypted?",
-      answer: "Yes. Messages are encrypted on your device and decrypted on the recipient's device. We can't read them.",
-    },
-    {
-      question: "How long do rooms and messages last?",
-      answer: "Rooms expire after 2 hours. If self-destruct is enabled, messages vanish 10 minutes after being read.",
-    },
-  ];
-
-  const steps = [
-    {
-      number: "1",
-      title: "Create a secure room",
-      description: "One click to generate a private room with end-to-end encryption.",
-      color: "from-primary to-purple-500",
-    },
-    {
-      number: "2",
-      title: "Share the link",
-      description: "Invite with a single link or QR code—no sign-up required.",
-      color: "from-purple-500 to-fuchsia-500",
-    },
-    {
-      number: "3",
-      title: "Chat and vanish",
-      description: "Messages self-destruct; rooms auto-expire. Nothing remains.",
-      color: "from-fuchsia-500 to-pink-500",
-    },
-  ];
+  const promiseItems = useMemo(
+    () => [
+      <><span>Zero tracking</span><span className="text-muted-foreground">Anonymous handles only</span></>,
+      <><span>Zero archives</span><span className="text-muted-foreground">Ephemeral rooms by default</span></>,
+      <><span>Zero compromise theater</span><span className="text-muted-foreground">Direct controls for destruction and access</span></>,
+      <><span>Zero clutter</span><span className="text-muted-foreground">Focused surfaces across phone, tablet, and desktop</span></>,
+    ],
+    []
+  );
 
   return (
-    <div className="min-h-screen bg-background text-foreground overflow-x-hidden relative font-sans">
-      <div className="pointer-events-none fixed inset-0 z-50 transition-colors duration-500 pointer-events-none" />
-      
-      {/* Navigation */}
-      <motion.nav 
-        className="fixed top-0 w-full z-40 border-b bg-background/80 backdrop-blur supports-[backdrop-filter]:bg-background/60"
-        initial={{ y: -100 }}
-        animate={{ y: 0 }}
-        transition={{ duration: 0.5 }}
-      >
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 h-16 flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <div className="relative h-8 w-8 bg-gradient-to-br from-primary to-purple-600 rounded-lg flex items-center justify-center shadow-lg shadow-primary/25">
-              <Shield className="h-5 w-5 text-white" />
-              <div className="absolute -bottom-1 -right-1 h-3 w-3 bg-green-500 rounded-full border-2 border-background animate-pulse" />
-            </div>
-            <span className="font-bold text-xl tracking-tight bg-clip-text text-transparent bg-gradient-to-r from-foreground to-foreground/70">
-              Zero Trace
-            </span>
+    <div className="relative">
+      <header className="sticky top-0 z-30 border-b-2 border-border bg-background/90 backdrop-blur-sm">
+        <div className="mx-auto flex max-w-[95vw] items-center justify-between gap-4 px-4 py-4 md:px-8">
+          <div>
+            <p className="site-kicker text-accent">Zero-Trace</p>
+            <p className="text-[0.68rem] uppercase tracking-[0.24em] text-muted-foreground md:text-xs">Secure anonymous rooms</p>
           </div>
-
-          <div className="hidden sm:flex items-center gap-4">
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={toggleTheme}
-              className="rounded-full w-9 h-9 p-0"
-            >
-              {isDark ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
-            </Button>
-            <Button
-              size="sm"
-              onClick={() => navigate("/create")}
-              disabled={isOpeningCreate}
-              className="rounded-full bg-gradient-to-r from-primary to-purple-600 hover:from-primary/90 hover:to-purple-600/90 transition-transform active:scale-[0.98] text-white border-0"
-            >
-              {isOpeningCreate ? (
-                <>
-                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                  Opening...
-                </>
-              ) : (
-                <>
-                  <Plus className="mr-2 h-4 w-4" />
-                  Create Room
-                </>
-              )}
-            </Button>
-          </div>
-
-          <div className="sm:hidden flex items-center gap-2">
-            <Button
-              variant="ghost"
-              size="icon"
-              onClick={toggleTheme}
-              aria-label="Toggle dark mode"
-              className="rounded-full"
-            >
-              {isDark ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
-            </Button>
-
-            <Sheet>
-              <SheetTrigger asChild>
-                <Button variant="ghost" size="icon" aria-label="Open navigation menu" className="rounded-full">
-                  <Menu className="h-5 w-5" />
-                </Button>
-              </SheetTrigger>
-              <SheetContent side="right" className="w-72">
-                <SheetHeader>
-                  <SheetTitle className="gradient-text text-left">Quick Actions</SheetTitle>
-                </SheetHeader>
-                <div className="mt-6 space-y-3 px-1">
-                  <Button
-                    className="w-full justify-start rounded-xl h-12 bg-gradient-to-r from-primary to-purple-600 hover:from-primary/90 hover:to-purple-600/90 text-white border-0"
-                    onClick={() => navigate("/create")}
-                    disabled={isOpeningCreate}
-                  >
-                    {isOpeningCreate ? (
-                      <>
-                        <Loader2 className="mr-3 h-4 w-4 animate-spin" />
-                        Opening...
-                      </>
-                    ) : (
-                      <>
-                        <Plus className="mr-3 h-4 w-4" />
-                        Create Room
-                      </>
-                    )}
-                  </Button>
-                </div>
-              </SheetContent>
-            </Sheet>
+          <div className="ml-auto flex items-center gap-2 md:gap-4">
+            <SiteButton size="sm" onClick={() => navigate("/create")}>
+              Create room
+            </SiteButton>
           </div>
         </div>
-      </motion.nav>
+      </header>
 
-      {/* Hero Section */}
-      <div className="relative max-w-6xl mx-auto px-4 sm:px-6 pt-24 sm:pt-32 lg:pt-40 pb-16 sm:pb-20 lg:pb-28">
-        <motion.div className="pointer-events-none absolute inset-0 -z-10 hidden sm:block">
-          <motion.div
-            style={{ opacity: spotlightOpacity }}
-            className="mx-auto mt-12 h-56 w-[70%] rounded-full bg-primary/10 blur-3xl"
-          />
-        </motion.div>
-
-        <div className="grid lg:grid-cols-2 gap-12 lg:gap-16 items-center">
-          <motion.div
-            initial={{ opacity: 0, y: 30 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.7 }}
-            className="space-y-8 text-center lg:text-left"
+      <main>
+        <section className="relative overflow-hidden border-b-2 border-border px-4 py-6 sm:py-8 md:px-8 md:py-14 lg:py-20">
+          <div
+            aria-hidden="true"
+            className="pointer-events-none absolute right-4 top-6 hidden text-[clamp(5rem,14vw,14rem)] font-bold leading-none tracking-[-0.1em] text-muted/60 md:block lg:right-10 lg:top-8"
           >
-            <div className="space-y-4">
-              <motion.div
-                initial={{ opacity: 0, x: -20 }}
-                animate={{ opacity: 1, x: 0 }}
-                transition={{ delay: 0.2 }}
-                className="inline-flex items-center gap-2 px-4 py-1.5 rounded-full glass border border-primary/20 text-sm text-muted-foreground"
-              >
-                <Shield className="h-3.5 w-3.5 text-primary" />
-                End-to-end encrypted
-              </motion.div>
+            01
+          </div>
 
-              <h1 className="text-4xl sm:text-5xl md:text-6xl lg:text-7xl font-bold tracking-tight leading-[1.1]">
-                Secure
-                <br />
-                <span className="gradient-text">Anonymous</span>
-                <br />
-                Chat Rooms
-              </h1>
-              <p className="text-lg sm:text-xl text-muted-foreground max-w-xl mx-auto lg:mx-0 leading-relaxed">
-                Create or join encrypted chat rooms instantly. No accounts, no tracking, just secure conversations that vanish.
-              </p>
+          <motion.div
+            style={{ scale: heroScale, opacity: heroOpacity }}
+            className="mx-auto grid max-w-[95vw] gap-8 lg:grid-cols-[minmax(0,1.05fr)_minmax(320px,0.95fr)] lg:items-end"
+          >
+            <div className="space-y-6 py-4 md:space-y-8 md:py-10 lg:py-14">
+              <SiteBadge className="border-accent text-accent">Secure transient communication</SiteBadge>
+              <div className="max-w-[22rem] space-y-5 md:max-w-3xl md:space-y-6">
+                <h1 className="site-display max-w-[10ch] text-[clamp(3.25rem,8.5vw,8.5rem)]">
+                  Secure rooms that <span className="text-accent">disappear</span> when the work is done.
+                </h1>
+                <p className="site-copy max-w-2xl text-foreground/80">
+                  Zero-Trace gives teams a sharper place to talk: encrypted room handoff, short retention, instant entry,
+                  and a calmer interface that stays readable on phones, tablets, and desktops.
+                </p>
+              </div>
+
+              <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap">
+                <SiteButton size="lg" onClick={() => navigate("/create")}>
+                  Open secure room
+                  <ArrowRight className="h-5 w-5" />
+                </SiteButton>
+              </div>
+
+              <div className="grid gap-px bg-border sm:grid-cols-2 xl:grid-cols-4">
+                {heroSignals.map(([label, copy]) => (
+                  <div key={label} className="bg-background p-4 sm:p-5">
+                    <p className="text-[0.68rem] font-bold uppercase tracking-[0.22em] text-foreground md:text-xs md:tracking-[0.24em]">
+                      {label}
+                    </p>
+                    <p className="mt-2 text-sm leading-6 text-foreground/72 md:text-base">{copy}</p>
+                  </div>
+                ))}
+              </div>
             </div>
 
-            <motion.div
-              initial={{ opacity: 0, y: 20 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ duration: 0.6, delay: 0.3 }}
-              className="flex flex-col sm:flex-row gap-4 justify-center lg:justify-start"
-            >
-              <Button
-                size="lg"
-                className="text-base sm:text-lg px-8 py-6 h-14 rounded-xl bg-gradient-to-r from-primary to-purple-600 hover:from-primary/90 hover:to-purple-600/90 text-white border-0 shadow-lg shadow-primary/25"
-                onClick={() => navigate("/create")}
-              >
-                Create Room
-                <ArrowRight className="ml-2 h-5 w-5" />
-              </Button>
-            </motion.div>
-
-            <motion.div
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              transition={{ delay: 0.6 }}
-              className="flex items-center gap-6 justify-center lg:justify-start text-sm text-muted-foreground"
-            >
-              <span className="flex items-center gap-1.5">
-                <div className="h-2 w-2 rounded-full bg-green-500" />
-                No sign-up
-              </span>
-              <span className="flex items-center gap-1.5">
-                <div className="h-2 w-2 rounded-full bg-green-500" />
-                Auto-expiring
-              </span>
-              <span className="flex items-center gap-1.5">
-                <div className="h-2 w-2 rounded-full bg-green-500" />
-                AES-256
-              </span>
-            </motion.div>
-          </motion.div>
-
-          {/* Floating visual element */}
-          <motion.div
-            initial={{ opacity: 0, scale: 0.9, y: 20 }}
-            animate={{ opacity: 1, scale: 1, y: 0 }}
-            transition={{ duration: 0.8, delay: 0.3 }}
-            className="hidden lg:flex items-center justify-center"
-          >
-            <div className="relative">
-              <motion.div
-                animate={{ y: [-8, 8, -8] }}
-                transition={{ duration: 5, repeat: Infinity, ease: "easeInOut" }}
-                className="relative w-80 h-80"
-              >
-                <div className="absolute inset-0 rounded-3xl bg-gradient-to-br from-primary/20 via-purple-500/10 to-fuchsia-500/20 blur-2xl" />
-                <div className="relative glass rounded-3xl border border-primary/20 p-8 h-full flex flex-col justify-between gradient-border">
-                  <div className="space-y-3">
-                    <div className="flex items-center gap-3">
-                      <div className="h-10 w-10 rounded-full bg-gradient-to-br from-primary to-purple-600 flex items-center justify-center">
-                        <Lock className="h-5 w-5 text-white" />
-                      </div>
-                      <div>
-                        <div className="text-sm font-semibold">Secure Room</div>
-                        <div className="text-xs text-muted-foreground">Encrypted • 3 members</div>
-                      </div>
+            <div className="flex items-stretch lg:justify-end">
+              <SitePanel className="w-full overflow-hidden p-0">
+                <div className="flex flex-col gap-5 border-b-2 border-border px-5 py-5 md:px-7 md:py-6">
+                  <div className="flex items-start justify-between gap-4">
+                    <div>
+                      <p className="site-kicker text-accent">Room preview</p>
+                      <p className="mt-3 text-2xl font-bold uppercase leading-[0.92] tracking-[-0.05em] md:text-4xl">
+                        Encrypted entry without the usual friction.
+                      </p>
                     </div>
-                    <div className="space-y-2 pt-2">
-                      <div className="glass rounded-2xl rounded-tl-sm px-4 py-2.5 text-sm max-w-[75%]">
-                        Hey, is this secure? 🔐
-                      </div>
-                      <div className="glass rounded-2xl rounded-tr-sm px-4 py-2.5 text-sm max-w-[80%] ml-auto bg-primary/10">
-                        End-to-end encrypted!
-                      </div>
-                      <div className="glass rounded-2xl rounded-tl-sm px-4 py-2.5 text-sm max-w-[70%]">
-                        Messages vanish ✨
-                      </div>
+                    <div className="border border-border px-3 py-2 text-[0.65rem] font-bold uppercase tracking-[0.22em] text-muted-foreground md:text-[0.7rem]">
+                      Live
                     </div>
                   </div>
-                  <div className="flex items-center gap-2 text-xs text-muted-foreground mt-4">
-                    <Timer className="h-3.5 w-3.5" />
-                    <span>Expires in 1h 42m</span>
-                  </div>
-                </div>
-              </motion.div>
-            </div>
-          </motion.div>
-        </div>
-      </div>
-
-      {/* Features Grid */}
-      <motion.section
-        initial={{ opacity: 0, y: 40 }}
-        whileInView={{ opacity: 1, y: 0 }}
-        viewport={{ once: true, amount: 0.1 }}
-        transition={{ delay: 0.1 }}
-        className="max-w-6xl mx-auto px-4 sm:px-6 pb-20 sm:pb-28"
-      >
-        <div className="text-center mb-12">
-          <h2 className="text-3xl sm:text-4xl font-bold mb-3">
-            Why <span className="gradient-text">Zero-Trace</span>?
-          </h2>
-          <p className="text-muted-foreground text-lg max-w-2xl mx-auto">
-            Privacy-first features designed to keep your conversations truly private.
-          </p>
-        </div>
-
-        <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-5 sm:gap-6">
-          {features.map((feature, index) => (
-            <motion.div
-              key={feature.title}
-              initial={{ opacity: 0, y: 24, scale: 0.98 }}
-              whileInView={{ opacity: 1, y: 0, scale: 1 }}
-              viewport={{ once: true, amount: 0.2 }}
-              transition={{ duration: 0.5, delay: 0.05 * index }}
-            >
-              <Card className="h-full glass border-primary/10 hover:border-primary/25 transition-all duration-300 group">
-                <CardContent className="p-6">
-                  <div className="w-12 h-12 rounded-2xl bg-gradient-to-br from-primary/15 to-purple-500/10 flex items-center justify-center mb-4 group-hover:from-primary/25 group-hover:to-purple-500/20 transition-all duration-300">
-                    <feature.icon className="h-6 w-6 text-primary" />
-                  </div>
-                  <h3 className="font-semibold text-base mb-2">{feature.title}</h3>
-                  <p className="text-sm text-muted-foreground leading-relaxed">
-                    {feature.description}
+                  <p className="max-w-xl text-sm leading-6 text-foreground/78 md:text-base">
+                    Build a room, share the key, and let the session expire on schedule. The interface stays product-focused
+                    instead of decorative.
                   </p>
-                </CardContent>
-              </Card>
-            </motion.div>
-          ))}
-        </div>
-      </motion.section>
+                </div>
 
-      {/* How It Works Section */}
-      <motion.section
-        initial={{ opacity: 0, y: 40 }}
-        whileInView={{ opacity: 1, y: 0 }}
-        viewport={{ once: true, amount: 0.2 }}
-        transition={{ duration: 0.5 }}
-        className="max-w-6xl mx-auto px-4 sm:px-6 pb-20 sm:pb-28"
-      >
-        <div className="text-center mb-12">
-          <h2 className="text-3xl sm:text-4xl font-bold mb-3">
-            How it <span className="gradient-text">Works</span>
-          </h2>
-          <p className="text-muted-foreground text-lg">
-            Create. Share. Chat. Everything disappears automatically.
-          </p>
-        </div>
-        <div className="grid sm:grid-cols-3 gap-6 sm:gap-8">
-          {steps.map((step, index) => (
-            <motion.div
-              key={step.number}
-              whileInView={{ opacity: 1, y: 0 }}
-              initial={{ opacity: 0, y: 24 }}
-              viewport={{ once: true }}
-              transition={{ delay: 0.1 * index }}
-              className="relative glass rounded-2xl border border-primary/10 p-6 sm:p-8 text-center group hover:border-primary/25 transition-all duration-300"
-            >
-              <div className={`w-14 h-14 rounded-full bg-gradient-to-br ${step.color} flex items-center justify-center mx-auto mb-5 text-white font-bold text-xl shadow-lg`}>
-                {step.number}
-              </div>
-              <h3 className="font-semibold text-lg mb-2">{step.title}</h3>
-              <p className="text-sm text-muted-foreground leading-relaxed">
-                {step.description}
-              </p>
-            </motion.div>
-          ))}
-        </div>
-      </motion.section>
-
-      {/* FAQ Section */}
-      <motion.section
-        initial={{ opacity: 0, y: 40 }}
-        whileInView={{ opacity: 1, y: 0 }}
-        viewport={{ once: true, amount: 0.2 }}
-        transition={{ duration: 0.5 }}
-        className="max-w-3xl mx-auto px-4 sm:px-6 pb-20 sm:pb-28"
-      >
-        <div className="text-center mb-10">
-          <h2 className="text-3xl sm:text-4xl font-bold mb-3">
-            Frequently <span className="gradient-text">Asked</span>
-          </h2>
-          <p className="text-muted-foreground text-lg">
-            Quick answers about privacy and usage
-          </p>
-        </div>
-        <div className="glass rounded-2xl border border-primary/10 divide-y divide-primary/10">
-          {faqs.map((faq, index) => (
-            <div key={index}>
-              <button
-                onClick={() => setOpenFaq(openFaq === index ? null : index)}
-                className="w-full flex items-center justify-between gap-4 px-6 py-5 text-left text-base font-medium hover:text-primary transition-colors"
-              >
-                {faq.question}
-                <ChevronDown className={`h-4 w-4 shrink-0 text-muted-foreground transition-transform duration-200 ${openFaq === index ? "rotate-180" : ""}`} />
-              </button>
-              <AnimatePresence initial={false}>
-                {openFaq === index && (
-                  <motion.div
-                    initial={{ height: 0, opacity: 0 }}
-                    animate={{ height: "auto", opacity: 1 }}
-                    exit={{ height: 0, opacity: 0 }}
-                    transition={{ duration: 0.2, ease: "easeInOut" }}
-                    className="overflow-hidden"
-                  >
-                    <div className="px-6 pb-5 text-sm text-muted-foreground leading-relaxed">
-                      {faq.answer}
+                <div className="grid gap-px bg-border lg:grid-cols-[0.78fr_1.22fr]">
+                  <div className="flex flex-col justify-between gap-6 bg-muted p-5 md:p-7">
+                    <div>
+                      <p className="text-[0.68rem] font-bold uppercase tracking-[0.22em] text-muted-foreground md:text-xs md:tracking-[0.24em]">
+                        Retention window
+                      </p>
+                      <p className="site-number mt-3 text-[clamp(4.25rem,10vw,7.5rem)] text-foreground">02H</p>
                     </div>
-                  </motion.div>
-                )}
-              </AnimatePresence>
-            </div>
-          ))}
-        </div>
-      </motion.section>
+                    <p className="max-w-sm text-sm leading-6 text-foreground/72 md:text-base">
+                      Automatic room expiry and optional self-destruct rules keep conversations short-lived by default.
+                    </p>
+                  </div>
 
-      {/* Security Promise */}
-      <motion.section
-        initial={{ opacity: 0, y: 40 }}
-        whileInView={{ opacity: 1, y: 0 }}
-        viewport={{ once: true, amount: 0.2 }}
-        transition={{ duration: 0.5 }}
-        className="max-w-6xl mx-auto px-4 sm:px-6 pb-20 sm:pb-28"
-      >
-        <div className="relative glass rounded-3xl border border-primary/15 overflow-hidden">
-          <div className="absolute inset-0 bg-gradient-to-br from-primary/5 via-transparent to-purple-500/5" />
-          <div className="relative p-8 sm:p-12 text-center">
-            <div className="flex items-center justify-center gap-3 mb-5">
-              <div className="h-12 w-12 rounded-2xl bg-gradient-to-br from-primary to-purple-600 flex items-center justify-center">
-                <AlertTriangle className="h-6 w-6 text-white" />
+                  <div className="bg-background p-5 md:p-7">
+                    <div className="grid gap-y-4">
+                      {roomPreview.map(([label, copy], index) => (
+                        <div
+                          key={label}
+                          className={`grid gap-2 ${index !== 0 ? "border-t border-border pt-4" : ""} md:grid-cols-[0.34fr_1fr] md:items-start`}
+                        >
+                          <p className="text-[0.68rem] font-bold uppercase tracking-[0.22em] text-muted-foreground md:text-xs md:tracking-[0.24em]">
+                            {label}
+                          </p>
+                          <p className="text-lg font-bold uppercase leading-[0.95] tracking-[-0.04em] md:text-2xl">{copy}</p>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+
+                <div className="grid gap-px bg-border sm:grid-cols-3">
+                  {[
+                    ["Ready in", "seconds"],
+                    ["Works on", "phone and desktop"],
+                    ["Escalates to", "voice or video calls"],
+                  ].map(([label, copy]) => (
+                    <div key={label} className="bg-background p-4 sm:p-5">
+                      <p className="text-[0.68rem] font-bold uppercase tracking-[0.22em] text-muted-foreground md:text-xs md:tracking-[0.24em]">
+                        {label}
+                      </p>
+                      <p className="mt-2 text-base font-bold uppercase tracking-[-0.04em] md:text-lg">{copy}</p>
+                    </div>
+                  ))}
+                </div>
+              </SitePanel>
+            </div>
+          </motion.div>
+        </section>
+
+        <SiteMarquee inverted speed="fast" items={statItems} />
+
+        <section id="systems" className="mx-auto max-w-[95vw] px-4 py-16 md:px-8 md:py-24 lg:py-28">
+          <div className="grid gap-10 lg:grid-cols-[0.88fr_1.12fr]">
+            <div className="space-y-8">
+              <SiteSectionHeading
+                eyebrow="Security posture"
+                title={<>Typography is the structure. Privacy is the payload.</>}
+                description="The public product surfaces move with confidence while the room mechanics stay operational and direct. Sharp borders, strong contrast, no ornamental blur."
+              />
+              <div className="space-y-4 border-l-4 border-accent pl-4 md:pl-5">
+                <p className="text-[0.7rem] font-bold uppercase tracking-[0.24em] text-accent md:text-sm md:tracking-[0.22em]">
+                  Operating principles
+                </p>
+                <p className="site-copy text-muted-foreground">
+                  Every surface is tuned around one system: rich black foundation, off-white type, zinc structure lines,
+                  and acid yellow only where the interface needs a clear signal.
+                </p>
               </div>
             </div>
-            <h2 className="text-2xl sm:text-3xl font-bold mb-4">
-              Zero Trust <span className="gradient-text">Architecture</span>
-            </h2>
-            <p className="text-lg text-muted-foreground mb-10 max-w-2xl mx-auto leading-relaxed">
-              We can't read your messages even if we wanted to. Everything is encrypted on your device
-              before transmission, and all data automatically expires within 2 hours.
-            </p>
-            <div className="grid grid-cols-3 gap-4 sm:gap-8 max-w-lg mx-auto">
-              <div>
-                <div className="text-3xl sm:text-4xl font-bold gradient-text mb-1">0</div>
-                <div className="text-xs sm:text-sm text-muted-foreground">Personal Data Stored</div>
-              </div>
-              <div>
-                <div className="text-3xl sm:text-4xl font-bold gradient-text mb-1">2h</div>
-                <div className="text-xs sm:text-sm text-muted-foreground">Maximum Lifetime</div>
-              </div>
-              <div>
-                <div className="text-3xl sm:text-4xl font-bold gradient-text mb-1">∞</div>
-                <div className="text-xs sm:text-sm text-muted-foreground">Privacy Protection</div>
-              </div>
+            <div className="space-y-4 md:space-y-5">
+              {featureCards.map((feature, index) => (
+                <motion.div
+                  key={feature.number}
+                  initial={reduceMotion ? false : { opacity: 0, y: 24 }}
+                  whileInView={reduceMotion ? undefined : { opacity: 1, y: 0 }}
+                  viewport={{ once: true, amount: 0.2 }}
+                  transition={{ duration: 0.45, delay: index * 0.08 }}
+                  className="lg:sticky lg:top-24"
+                >
+                  <SitePanel className="is-interactive group p-5 md:p-8 lg:p-10">
+                    <div className="grid gap-5 md:grid-cols-[0.28fr_1fr] md:items-start">
+                      <p className="site-number text-muted group-hover:text-black">{feature.number}</p>
+                      <div className="space-y-3 md:space-y-4">
+                        <p className="text-2xl font-bold uppercase leading-[0.92] tracking-[-0.06em] md:text-4xl lg:text-5xl">
+                          {feature.title}
+                        </p>
+                        <p className="site-panel-muted max-w-2xl text-base leading-7 text-muted-foreground md:text-lg lg:text-xl">
+                          {feature.description}
+                        </p>
+                      </div>
+                    </div>
+                  </SitePanel>
+                </motion.div>
+              ))}
             </div>
           </div>
-        </div>
-      </motion.section>
+        </section>
 
-      {/* Footer */}
-      <motion.footer
-        initial={{ opacity: 0 }}
-        whileInView={{ opacity: 1 }}
-        viewport={{ once: true }}
-        transition={{ duration: 0.5 }}
-        className="border-t border-primary/10"
-      >
-        <div className="max-w-6xl mx-auto px-4 sm:px-6 py-6 flex flex-col sm:flex-row items-center justify-between gap-3">
-          <span className="font-bold gradient-text text-sm">Zero-Trace</span>
-          <p className="text-xs text-muted-foreground text-center">
-            Built with privacy in mind. No tracking, no analytics, no data collection.
-          </p>
-          <p className="text-xs text-muted-foreground">© 2026 Zero-Trace</p>
-        </div>
-      </motion.footer>
+        <section className="border-y-2 border-border bg-accent px-4 py-16 text-black md:px-8 md:py-20 lg:py-24">
+          <div className="mx-auto grid max-w-[95vw] gap-8 lg:grid-cols-[0.88fr_1.12fr] lg:items-center">
+            <div>
+              <p className="site-kicker text-black">How the cycle works</p>
+              <h2 className="mt-4 text-[clamp(2.5rem,8vw,7rem)] font-bold uppercase leading-[0.84] tracking-[-0.08em]">
+                Create. Share. Disappear.
+              </h2>
+            </div>
+            <div className="site-grid">
+              {workflow.map((step, index) => (
+                <div key={step.label} className="grid gap-4 bg-accent p-5 md:grid-cols-[0.22fr_1fr] md:p-7 lg:p-8">
+                  <p className="text-5xl font-bold leading-none tracking-[-0.08em] md:text-6xl lg:text-7xl">0{index + 1}</p>
+                  <div>
+                    <p className="text-2xl font-bold uppercase tracking-[-0.05em] md:text-3xl lg:text-4xl">{step.label}</p>
+                    <p className="mt-3 text-base leading-7 md:text-lg lg:text-xl">{step.body}</p>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        </section>
 
-      {/* QR Scanner Modal */}
-      {showQRScanner && <QRScanner onClose={() => setShowQRScanner(false)} />}
+        <SiteMarquee speed="slow" items={promiseItems} />
+
+        <section className="mx-auto max-w-[95vw] px-4 py-16 md:px-8 md:py-24 lg:py-28">
+          <div className="grid gap-10 lg:grid-cols-[0.72fr_1.28fr] lg:items-start">
+            <div className="space-y-6 lg:sticky lg:top-24">
+              <SiteSectionHeading
+                eyebrow="Field notes"
+                title={<>Questions that matter before you hand the room to someone else.</>}
+                description="The rules are simple: anonymous access, room-scoped key sharing, short lifetimes, and explicit destruction controls."
+              />
+              <div className="grid gap-px bg-border sm:grid-cols-3 lg:grid-cols-1 xl:grid-cols-3">
+                {fieldNotes.map(([label, copy]) => (
+                  <div key={label} className="bg-background p-4 sm:p-5">
+                    <p className="text-[0.68rem] font-bold uppercase tracking-[0.22em] text-accent md:text-xs md:tracking-[0.24em]">
+                      {label}
+                    </p>
+                    <p className="mt-3 text-sm leading-6 text-foreground/76 md:text-base">{copy}</p>
+                  </div>
+                ))}
+              </div>
+            </div>
+            <div className="border-2 border-border">
+              {faqs.map((faq, index) => (
+                <div key={faq.question} className="border-b-2 border-border last:border-b-0">
+                  <button
+                    type="button"
+                    onClick={() => setOpenFaq((current) => (current === index ? null : index))}
+                    className="site-focus flex w-full items-center justify-between gap-4 px-4 py-5 text-left md:px-7 md:py-6"
+                  >
+                    <span className="text-lg font-bold uppercase leading-[0.98] tracking-[-0.05em] md:text-2xl lg:text-3xl">
+                      {faq.question}
+                    </span>
+                    <ChevronDown
+                      className={`h-5 w-5 shrink-0 transition-transform ${openFaq === index ? "rotate-180 text-accent" : "text-muted-foreground"}`}
+                    />
+                  </button>
+                  <AnimatePresence initial={false}>
+                    {openFaq === index ? (
+                      <motion.div
+                        initial={reduceMotion ? false : { height: 0, opacity: 0 }}
+                        animate={reduceMotion ? undefined : { height: "auto", opacity: 1 }}
+                        exit={reduceMotion ? undefined : { height: 0, opacity: 0 }}
+                        transition={{ duration: 0.25, ease: "easeOut" }}
+                        className="overflow-hidden"
+                      >
+                        <p className="px-4 pb-6 text-base leading-7 text-muted-foreground md:px-7 md:pb-7 md:text-lg lg:text-xl">
+                          {faq.answer}
+                        </p>
+                      </motion.div>
+                    ) : null}
+                  </AnimatePresence>
+                </div>
+              ))}
+            </div>
+          </div>
+        </section>
+
+        <section className="border-t-2 border-border px-4 py-14 md:px-8 md:py-20 lg:py-24">
+          <div className="mx-auto grid max-w-[95vw] gap-8 lg:grid-cols-[1fr_auto] lg:items-end">
+            <div>
+              <p className="site-kicker text-accent">Open the room</p>
+              <h2 className="mt-4 text-[clamp(2.4rem,7vw,6rem)] font-bold uppercase leading-[0.86] tracking-[-0.08em]">
+                Privacy should feel immediate, not ceremonial.
+              </h2>
+            </div>
+            <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap">
+              <SiteButton size="lg" onClick={() => navigate("/create")}>
+                Launch room
+                <ArrowRight className="h-5 w-5" />
+              </SiteButton>
+            </div>
+          </div>
+        </section>
+      </main>
+
+      <footer className="border-t-2 border-border px-4 py-8 md:px-8">
+        <div className="mx-auto flex max-w-[95vw] flex-col gap-4 md:flex-row md:items-center md:justify-between">
+          <div className="flex items-center gap-3 text-sm font-bold uppercase tracking-[0.22em] text-muted-foreground">
+            <Shield className="h-4 w-4 text-accent" />
+            Zero-Trace network
+          </div>
+          <div className="flex flex-wrap gap-4 text-[0.68rem] uppercase tracking-[0.18em] text-muted-foreground md:text-xs md:tracking-[0.2em]">
+            <span className="inline-flex items-center gap-2"><Lock className="h-3.5 w-3.5" /> End-to-end encrypted</span>
+            <span className="inline-flex items-center gap-2"><Timer className="h-3.5 w-3.5" /> Two hour room lifetime</span>
+            <span className="inline-flex items-center gap-2"><Zap className="h-3.5 w-3.5" /> Real-time delivery</span>
+          </div>
+        </div>
+      </footer>
     </div>
   );
 }
+
+
+

@@ -6,6 +6,14 @@ describe("url-utils", () => {
     expect(normalizeUserUrl("www.example.com/path")).toBe("https://www.example.com/path");
   });
 
+  it("rejects urls with embedded credentials", () => {
+    expect(normalizeUserUrl("https://user:pass@example.com/secret")).toBeNull();
+  });
+
+  it("rejects excessively long urls", () => {
+    expect(normalizeUserUrl(`https://example.com/${"a".repeat(4096)}`)).toBeNull();
+  });
+
   it("extracts unique urls in order", () => {
     const urls = extractUrlsFromText("Visit https://example.com and www.example.com and https://example.com");
     expect(urls).toEqual(["https://example.com/", "https://www.example.com/"]);

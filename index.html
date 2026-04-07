@@ -3,6 +3,8 @@
 
 <head>
   <meta charset="UTF-8" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; base-uri 'self'; object-src 'none'; frame-ancestors 'none'; form-action 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https:; media-src 'self' blob: data: https:; font-src 'self' data:; connect-src 'self' https: http: ws: wss:;" />
+  <meta name="referrer" content="no-referrer" />
   <link rel="icon" type="image/png" href="/logo.png" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Zero-Trace</title>
@@ -16,19 +18,17 @@
       align-items: center;
       justify-content: center;
       gap: 1.5rem;
-      background: oklch(0.96 0.012 280);
       transition: opacity 0.4s ease-out;
       font-family: system-ui, -apple-system, sans-serif;
+      background: oklch(0.96 0.012 280);
+      color: #111827;
     }
-    .dark #splash-screen { background: oklch(0.16 0.015 280); }
-    .dark #splash-screen .splash-ring {
-      border-top-color: oklch(0.68 0.18 285) !important;
-      border-right-color: oklch(0.68 0.18 285 / 40%) !important;
-    }
+
     #splash-screen.fade-out {
       opacity: 0;
       pointer-events: none;
     }
+
     #splash-screen .splash-ring {
       width: 72px;
       height: 72px;
@@ -38,6 +38,7 @@
       border-right-color: oklch(0.55 0.24 285 / 40%);
       animation: splash-spin 1.1s cubic-bezier(0.4, 0, 0.2, 1) infinite;
     }
+
     #splash-screen .splash-title {
       font-size: 1.5rem;
       font-weight: 700;
@@ -46,14 +47,67 @@
       -webkit-text-fill-color: transparent;
       background-clip: text;
     }
-    #splash-logo {
-      width: 48px;
-      height: 48px;
-      margin-bottom: 1rem;
-      object-fit: contain;
+
+    html.dark #splash-screen {
+      background: oklch(0.16 0.015 280);
+      color: #fafafa;
     }
+
+    html.dark #splash-screen .splash-ring {
+      border-top-color: oklch(0.68 0.18 285);
+      border-right-color: oklch(0.68 0.18 285 / 40%);
+    }
+
+    html[data-surface="site"] #splash-screen {
+      background: #09090b;
+      color: #fafafa;
+      font-family: "Space Grotesk", system-ui, sans-serif;
+      gap: 2rem;
+    }
+
+    html[data-surface="site"] #splash-screen::before {
+      content: "";
+      position: absolute;
+      inset: 0;
+      background-image: linear-gradient(rgba(63, 63, 70, 0.28) 1px, transparent 1px), linear-gradient(90deg, rgba(63, 63, 70, 0.28) 1px, transparent 1px);
+      background-size: 32px 32px;
+      opacity: 0.35;
+    }
+
+    html[data-surface="site"] #splash-screen .splash-ring {
+      width: 124px;
+      height: 124px;
+      border-radius: 0;
+      border: 2px solid #3f3f46;
+      border-top-color: #dfe104;
+      border-right-color: #dfe104;
+      animation: splash-spin 1.2s linear infinite;
+    }
+
+    html[data-surface="site"] #splash-screen .splash-title {
+      position: relative;
+      font-size: clamp(3rem, 10vw, 8rem);
+      line-height: 0.82;
+      letter-spacing: -0.08em;
+      text-transform: uppercase;
+      background: none;
+      -webkit-text-fill-color: currentColor;
+      color: #fafafa;
+    }
+
+    html[data-surface="site"] #splash-screen .splash-subtitle {
+      position: relative;
+      font-size: 0.85rem;
+      font-weight: 700;
+      letter-spacing: 0.32em;
+      text-transform: uppercase;
+      color: #dfe104;
+    }
+
     @keyframes splash-spin {
-      to { transform: rotate(360deg); }
+      to {
+        transform: rotate(360deg);
+      }
     }
   </style>
 </head>
@@ -61,13 +115,17 @@
 <body>
   <script>
     try {
-      var s = localStorage.getItem("theme");
-      var d = window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches;
-      if (s ? s === "dark" : d) document.documentElement.classList.add("dark");
-    } catch(e) {}
+      var pathname = window.location.pathname;
+      var isPreservedSurface = pathname === "/join" || pathname.indexOf("/join/") === 0 || pathname.indexOf("/room/") === 0 || pathname.indexOf("/call/") === 0;
+      document.documentElement.dataset.surface = isPreservedSurface ? "app" : "site";
+      var savedTheme = localStorage.getItem("theme");
+      var prefersDark = window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches;
+      if (savedTheme ? savedTheme === "dark" : prefersDark) document.documentElement.classList.add("dark");
+    } catch (e) {}
   </script>
   <div id="splash-screen">
     <div class="splash-ring"></div>
+    <div class="splash-subtitle">Zero Trace Network</div>
     <div class="splash-title">Zero-Trace</div>
   </div>
   <div id="root"></div>

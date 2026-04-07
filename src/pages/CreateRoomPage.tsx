@@ -1,7 +1,5 @@
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Button } from "@/components/ui/button";
 import CreateRoom from "@/components/CreateRoom";
-import { motion } from "framer-motion";
+import { SiteButton } from "@/components/site/SitePrimitives";
 import { ArrowLeft } from "lucide-react";
 import { useNavigate } from "react-router";
 
@@ -9,42 +7,20 @@ export default function CreateRoomPage() {
   const navigate = useNavigate();
 
   return (
-    <div className="min-h-screen relative overflow-hidden">
-      <div className="pointer-events-none absolute inset-0">
-        <div className="absolute -top-24 -left-24 h-96 w-96 rounded-full bg-primary/10 blur-3xl" />
-        <div className="absolute -bottom-24 -right-24 h-96 w-96 rounded-full bg-primary/5 blur-3xl" />
+    <div className="mx-auto max-w-[95vw] px-4 py-8 sm:py-10 md:px-8 md:py-14">
+      <div className="mb-8 flex flex-col gap-5 border-b-2 border-border pb-8 md:mb-10 md:flex-row md:items-end md:justify-between">
+        <div className="max-w-4xl">
+          <p className="site-kicker text-accent">Room constructor</p>
+          <h1 className="mt-4 text-[clamp(2.6rem,11vw,9rem)] font-bold uppercase leading-[0.82] tracking-[-0.08em]">
+            Create the room before the room creates its own gravity.
+          </h1>
+        </div>
+        <SiteButton variant="ghost" size="sm" onClick={() => navigate("/")} className="self-start md:self-auto">
+          <ArrowLeft className="h-4 w-4" />
+          Back
+        </SiteButton>
       </div>
-
-      <div className="relative z-10 max-w-4xl mx-auto px-4 py-8 sm:py-12">
-        <motion.div
-          initial={{ opacity: 0, y: 12 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.4, ease: "easeOut" }}
-          className="space-y-6"
-        >
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={() => navigate("/")}
-            className="gap-2 text-muted-foreground hover:text-foreground"
-          >
-            <ArrowLeft className="h-4 w-4" />
-            Back
-          </Button>
-
-          <Card className="glass border-primary/10 shadow-xl shadow-primary/5">
-            <CardHeader>
-              <CardTitle className="text-2xl font-bold gradient-text">Create a Secure Room</CardTitle>
-              <p className="text-sm text-muted-foreground">
-                Configure your ephemeral, end‑to‑end encrypted chat room
-              </p>
-            </CardHeader>
-            <CardContent>
-              <CreateRoom />
-            </CardContent>
-          </Card>
-        </motion.div>
-      </div>
+      <CreateRoom />
     </div>
   );
 }

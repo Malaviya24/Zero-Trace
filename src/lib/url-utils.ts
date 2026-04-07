@@ -3,14 +3,16 @@ export type TextSegment =
   | { type: "link"; value: string; href: string };
 
 const URL_PATTERN = /((https?:\/\/|www\.)[^\s<]+)/gi;
+const MAX_USER_URL_LENGTH = 2048;
 
 export function normalizeUserUrl(raw: string): string | null {
   const trimmed = raw.trim();
-  if (!trimmed) return null;
+  if (!trimmed || trimmed.length > MAX_USER_URL_LENGTH) return null;
   const withProtocol = /^www\./i.test(trimmed) ? `https://${trimmed}` : trimmed;
   try {
     const parsed = new URL(withProtocol);
     if (!["http:", "https:"].includes(parsed.protocol)) return null;
+    if (parsed.username || parsed.password) return null;
     return parsed.toString();
   } catch {
     return null;

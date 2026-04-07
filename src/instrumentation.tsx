@@ -1,15 +1,4 @@
-import { Button } from "@/components/ui/button";
-import {
-  Collapsible,
-  CollapsibleContent,
-  CollapsibleTrigger,
-} from "@/components/ui/collapsible";
-import {
-  DialogContent,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
+import { Button, Collapsible, CollapsibleContent, CollapsibleTrigger, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/app/AppUI";
 import { Dialog } from "@radix-ui/react-dialog";
 import { ChevronDown, ExternalLink } from "lucide-react";
 import React, { useEffect, useState } from "react";
@@ -29,6 +18,52 @@ type AsyncError = {
 
 type GenericError = SyncError | AsyncError;
 
+const IS_DEV = import.meta.env.DEV;
+
+function getSafeCurrentUrlForReporting(): string {
+  try {
+    const url = new URL(window.location.href);
+    url.hash = "";
+    return url.toString();
+  } catch {
+    return window.location.origin;
+  }
+}
+
+function getSafeMonitoringEndpoint(): string | null {
+  const rawEndpoint = import.meta.env.VITE_VLY_MONITORING_URL;
+  if (!import.meta.env.VITE_VLY_APP_ID || !rawEndpoint) {
+    return null;
+  }
+
+  try {
+    const endpoint = new URL(rawEndpoint, window.location.origin);
+    if (endpoint.protocol === "https:") return endpoint.toString();
+    const isLocalHttp = endpoint.protocol === "http:" && ["localhost", "127.0.0.1"].includes(endpoint.hostname);
+    return IS_DEV && isLocalHttp ? endpoint.toString() : null;
+  } catch {
+    return null;
+  }
+}
+
+function normalizePromiseRejection(reason: unknown): AsyncError {
+  if (reason instanceof Error) {
+    return {
+      error: reason.message || "Unhandled promise rejection",
+      stack: reason.stack || "",
+    };
+  }
+
+  if (typeof reason === "string") {
+    return { error: reason, stack: "" };
+  }
+
+  return {
+    error: "Unhandled promise rejection",
+    stack: "",
+  };
+}
+
 async function reportErrorToVly(errorData: {
   error: string;
   stackTrace?: string;
@@ -36,16 +71,23 @@ async function reportErrorToVly(errorData: {
   lineno?: number;
   colno?: number;
 }) {
-  if (!import.meta.env.VITE_VLY_APP_ID) {
+  const endpoint = getSafeMonitoringEndpoint();
+  if (!endpoint) {
     return;
   }
 
   try {
-    await fetch(import.meta.env.VITE_VLY_MONITORING_URL, {
+    await fetch(endpoint, {
       method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      credentials: "omit",
+      keepalive: true,
+      referrerPolicy: "no-referrer",
       body: JSON.stringify({
         ...errorData,
-        url: window.location.href,
+        url: getSafeCurrentUrlForReporting(),
         projectSemanticIdentifier: import.meta.env.VITE_VLY_APP_ID,
       }),
     });
@@ -61,6 +103,9 @@ function ErrorDialog({
   error: GenericError;
   setError: (error: GenericError | null) => void;
 }) {
+  const canOpenEditor = IS_DEV && Boolean(import.meta.env.VITE_VLY_APP_ID);
+  const canShowDetails = IS_DEV && !!error.stack;
+
   return (
     <Dialog
       defaultOpen={true}
@@ -68,36 +113,42 @@ function ErrorDialog({
         setError(null);
       }}
     >
-      <DialogContent className="bg-red-700 text-white max-w-4xl">
+      <DialogContent className="max-w-4xl border-2 border-red-500 bg-[#120708] text-white">
         <DialogHeader>
           <DialogTitle>Runtime Error</DialogTitle>
         </DialogHeader>
-        A runtime error occurred. Open the vly editor to automatically debug the
-        error.
-        <div className="mt-4">
-          <Collapsible>
-            <CollapsibleTrigger>
-              <div className="flex items-center font-bold cursor-pointer">
-                See error details <ChevronDown />
-              </div>
-            </CollapsibleTrigger>
-            <CollapsibleContent className="max-w-[460px]">
-              <div className="mt-2 p-3 bg-neutral-800 rounded text-white text-sm overflow-x-auto max-h-60 max-w-full [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none]">
-                <pre className="whitespace-pre">{error.stack}</pre>
-              </div>
-            </CollapsibleContent>
-          </Collapsible>
-        </div>
-        <DialogFooter>
-          <a
-            href={`https://vly.ai/project/${import.meta.env.VITE_VLY_APP_ID}`}
-            target="_blank"
-          >
-            <Button>
-              <ExternalLink /> Open editor
-            </Button>
-          </a>
-        </DialogFooter>
+        <p className="text-sm text-white/80">
+          Something went wrong while rendering this screen. Refresh the page or rejoin the room if the problem persists.
+        </p>
+        {canShowDetails ? (
+          <div className="mt-4">
+            <Collapsible>
+              <CollapsibleTrigger>
+                <div className="flex cursor-pointer items-center font-bold">
+                  See error details <ChevronDown />
+                </div>
+              </CollapsibleTrigger>
+              <CollapsibleContent className="max-w-[460px]">
+                <div className="mt-2 max-h-60 max-w-full overflow-x-auto bg-neutral-900 p-3 text-sm text-white [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none]">
+                  <pre className="whitespace-pre">{error.stack}</pre>
+                </div>
+              </CollapsibleContent>
+            </Collapsible>
+          </div>
+        ) : null}
+        {canOpenEditor ? (
+          <DialogFooter>
+            <a
+              href={`https://vly.ai/project/${import.meta.env.VITE_VLY_APP_ID}`}
+              target="_blank"
+              rel="noreferrer noopener"
+            >
+              <Button>
+                <ExternalLink /> Open editor
+              </Button>
+            </a>
+          </DialogFooter>
+        ) : null}
       </DialogContent>
     </Dialog>
   );
@@ -120,47 +171,27 @@ class ErrorBoundary extends React.Component<
   }
 
   static getDerivedStateFromError() {
-    // Update state so the next render will show the fallback UI.
     return { hasError: true };
   }
 
   componentDidCatch(error: Error, info: React.ErrorInfo) {
-    // logErrorToMyService(
-    //   error,
-    //   // Example "componentStack":
-    //   //   in ComponentThatThrows (created by App)
-    //   //   in ErrorBoundary (created by App)
-    //   //   in div (created by App)
-    //   //   in App
-    //   info.componentStack,
-    //   // Warning: `captureOwnerStack` is not available in production.
-    //   React.captureOwnerStack(),
-    // );
-    reportErrorToVly({
+    void reportErrorToVly({
       error: error.message,
       stackTrace: error.stack,
     });
+
     this.setState({
       hasError: true,
       error: {
         error: error.message,
-        stack: info.componentStack ?? error.stack ?? "",
+        stack: IS_DEV ? info.componentStack ?? error.stack ?? "" : "",
       },
     });
   }
 
   render() {
     if (this.state.hasError) {
-      // You can render any custom fallback UI
-      return (
-        <ErrorDialog
-          error={{
-            error: "An error occurred",
-            stack: "",
-          }}
-          setError={() => {}}
-        />
-      );
+      return <ErrorDialog error={{ error: "An error occurred", stack: "" }} setError={() => {}} />;
     }
 
     return this.props.children;
@@ -177,25 +208,22 @@ export function InstrumentationProvider({
   useEffect(() => {
     const handleError = async (event: ErrorEvent) => {
       try {
-        console.log(event);
         event.preventDefault();
         setError({
           error: event.message,
-          stack: event.error?.stack || "",
+          stack: IS_DEV ? event.error?.stack || "" : "",
           filename: event.filename || "",
           lineno: event.lineno,
           colno: event.colno,
         });
 
-        if (import.meta.env.VITE_VLY_APP_ID) {
-          await reportErrorToVly({
-            error: event.message,
-            stackTrace: event.error?.stack,
-            filename: event.filename,
-            lineno: event.lineno,
-            colno: event.colno,
-          });
-        }
+        await reportErrorToVly({
+          error: event.message,
+          stackTrace: event.error?.stack,
+          filename: event.filename,
+          lineno: event.lineno,
+          colno: event.colno,
+        });
       } catch (error) {
         console.error("Error in handleError:", error);
       }
@@ -203,18 +231,15 @@ export function InstrumentationProvider({
 
     const handleRejection = async (event: PromiseRejectionEvent) => {
       try {
-        console.error(event);
-
-        if (import.meta.env.VITE_VLY_APP_ID) {
-          await reportErrorToVly({
-            error: event.reason.message,
-            stackTrace: event.reason.stack,
-          });
-        }
-
+        const normalized = normalizePromiseRejection(event.reason);
         setError({
-          error: event.reason.message,
-          stack: event.reason.stack,
+          error: normalized.error,
+          stack: IS_DEV ? normalized.stack : "",
+        });
+
+        await reportErrorToVly({
+          error: normalized.error,
+          stackTrace: normalized.stack,
         });
       } catch (error) {
         console.error("Error in handleRejection:", error);
@@ -229,10 +254,11 @@ export function InstrumentationProvider({
       window.removeEventListener("unhandledrejection", handleRejection);
     };
   }, []);
+
   return (
     <>
       <ErrorBoundary>{children}</ErrorBoundary>
-      {error && <ErrorDialog error={error} setError={setError} />}
+      {error ? <ErrorDialog error={error} setError={setError} /> : null}
     </>
   );
 }

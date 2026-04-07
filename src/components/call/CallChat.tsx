@@ -1,13 +1,11 @@
-import { useState, useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { MessageSquare, Send } from "lucide-react";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { ScrollArea } from "@/components/ui/scroll-area";
-import { Badge } from "@/components/ui/badge";
-import { cn } from "@/lib/utils";
-import { useQuery, useMutation } from "@/lib/convex-helpers";
+
+import { Badge, Button, Input, ScrollArea } from "@/components/app/AppUI";
 import { api } from "@/convex/_generated/api";
 import { Id } from "@/convex/_generated/dataModel";
+import { useMutation, useQuery } from "@/lib/convex-helpers";
+import { cn } from "@/lib/utils";
 
 interface CallChatProps {
   roomId?: string;
@@ -43,7 +41,7 @@ export function CallChat({ roomId, displayName, className }: CallChatProps) {
         }
       })()
     : null;
-  
+
   const messages = useQuery(
     (api as any).messages.getRoomMessages,
     resolvedRoomId && participantId && participantToken
@@ -55,10 +53,9 @@ export function CallChat({ roomId, displayName, className }: CallChatProps) {
         }
       : "skip"
   );
-  
+
   const sendMessageMutation = useMutation((api as any).messages.sendMessage);
 
-  // Auto-scroll to bottom when new messages arrive
   useEffect(() => {
     if (scrollRef.current) {
       scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
@@ -82,49 +79,52 @@ export function CallChat({ roomId, displayName, className }: CallChatProps) {
     }
   };
 
-  const handleKeyPress = (e: React.KeyboardEvent) => {
-    if (e.key === "Enter" && !e.shiftKey) {
-      e.preventDefault();
+  const handleKeyPress = (event: React.KeyboardEvent) => {
+    if (event.key === "Enter" && !event.shiftKey) {
+      event.preventDefault();
       handleSend();
     }
   };
 
   return (
-    <div className={cn("flex flex-col h-full bg-card border-l", className)}>
-      <div className="p-4 border-b">
-        <div className="flex items-center gap-2">
-          <MessageSquare className="h-5 w-5" />
-          <h3 className="font-semibold">Chat</h3>
-          {messages && messages.length > 0 && (
-            <Badge variant="secondary" className="ml-auto">
+    <div className={cn("flex h-full flex-col bg-[#09090b] text-[#fafafa] [font-family:Space_Grotesk,_Inter,_sans-serif]", className)}>
+      <div className="border-b-2 border-[#3f3f46] p-4">
+        <div className="flex items-center gap-3">
+          <div className="flex h-12 w-12 items-center justify-center border-2 border-[#3f3f46] bg-[#18181b] text-[#dfe104]">
+            <MessageSquare className="h-5 w-5" />
+          </div>
+          <div>
+            <h3 className="text-lg font-bold uppercase tracking-[-0.04em]">Call chat</h3>
+            <p className="text-xs font-bold uppercase tracking-[0.18em] text-[#a1a1aa]">Room-linked messages</p>
+          </div>
+          {messages && messages.length > 0 ? (
+            <Badge className="ml-auto rounded-none border border-[#3f3f46] bg-[#18181b] px-2 py-1 text-[10px] font-bold uppercase tracking-[0.18em] text-[#a1a1aa] hover:bg-[#18181b]">
               {messages.length}
             </Badge>
-          )}
+          ) : null}
         </div>
       </div>
 
       <ScrollArea className="flex-1 p-4" ref={scrollRef}>
         <div className="space-y-3">
           {!resolvedRoomId ? (
-            <div className="text-center text-muted-foreground text-sm py-8">
-              Chat is only available for calls within a room
+            <div className="border border-[#3f3f46] bg-[#111217] px-4 py-6 text-center text-sm uppercase tracking-[0.14em] text-[#a1a1aa]">
+              Chat is only available for calls inside a room.
             </div>
           ) : messages && messages.length > 0 ? (
             messages.map((msg: any) => (
               <div
                 key={msg._id}
                 className={cn(
-                  "flex flex-col gap-1 p-3 rounded-lg max-w-[85%]",
+                  "flex max-w-[88%] flex-col gap-2 border p-3",
                   msg.senderName === displayName
-                    ? "ml-auto bg-primary text-primary-foreground"
-                    : "bg-muted"
+                    ? "ml-auto border-[#dfe104] bg-[#dfe104] text-black"
+                    : "border-[#3f3f46] bg-[#111217] text-[#fafafa]"
                 )}
               >
-                <div className="flex items-center gap-2">
-                  <span className="text-xs font-medium">
-                    {msg.senderName === displayName ? "You" : msg.senderName}
-                  </span>
-                  <span className="text-xs opacity-70">
+                <div className="flex items-center gap-2 text-[11px] font-bold uppercase tracking-[0.16em] opacity-75">
+                  <span>{msg.senderName === displayName ? "You" : msg.senderName}</span>
+                  <span>
                     {new Date(msg._creationTime).toLocaleTimeString([], {
                       hour: "2-digit",
                       minute: "2-digit",
@@ -135,30 +135,31 @@ export function CallChat({ roomId, displayName, className }: CallChatProps) {
               </div>
             ))
           ) : (
-            <div className="text-center text-muted-foreground text-sm py-8">
-              No messages yet. Start the conversation!
+            <div className="border border-[#3f3f46] bg-[#111217] px-4 py-6 text-center text-sm uppercase tracking-[0.14em] text-[#a1a1aa]">
+              No messages yet. Start the conversation.
             </div>
           )}
         </div>
       </ScrollArea>
 
-      <div className="p-4 border-t">
-        <div className="flex gap-2">
+      <div className="border-t-2 border-[#3f3f46] p-4">
+        <div className="flex gap-2 border-2 border-[#3f3f46] bg-[#111217] p-2">
           <Input
             id="call-chat-input"
             name="call-message"
             value={message}
-            onChange={(e) => setMessage(e.target.value)}
+            onChange={(event) => setMessage(event.target.value)}
             onKeyPress={handleKeyPress}
-            placeholder={resolvedRoomId ? "Type a message..." : "Chat unavailable"}
+            placeholder={resolvedRoomId ? "Type a message" : "Chat unavailable"}
             disabled={!resolvedRoomId}
-            className="flex-1"
+            className="h-12 flex-1 rounded-none border-0 bg-transparent text-sm font-medium text-[#fafafa] placeholder:text-[#52525b] focus-visible:ring-0"
             autoComplete="off"
           />
           <Button
             onClick={handleSend}
             disabled={!message.trim() || !resolvedRoomId || !participantId || !participantToken}
             size="icon"
+            className="h-12 w-12 rounded-none border-2 border-[#dfe104] bg-[#dfe104] text-black hover:bg-[#d3d53c]"
           >
             <Send className="h-4 w-4" />
           </Button>
@@ -167,3 +168,5 @@ export function CallChat({ roomId, displayName, className }: CallChatProps) {
     </div>
   );
 }
+
+
