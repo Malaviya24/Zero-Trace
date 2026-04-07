@@ -894,19 +894,8 @@ export default function CometChatRoom({ roomId, displayName, encryptionKey, part
           subtitle={`${onlineCount} members active`}
           onlineCount={onlineCount}
           onToggleSidebar={() => setIsSidebarMobileOpen(true)}
-          onCall={async (video) => {
-            if (!CONFIG.callPreflight.canStartCalls) {
-              toast.error(
-                CONFIG.callPreflight.missingCallInfraReason ||
-                  "Calls are unavailable because call infrastructure is not configured."
-              );
-              return;
-            }
-            sessionStorage.setItem("call_display_name", displayName);
-            sessionStorage.setItem("call_room_id", roomId);
-            sessionStorage.setItem("call_video_mode", video ? "1" : "0");
-            captureCallReturnPath(roomId);
-            navigate(`/call/new?video=${video}`);
+          onCall={(video) => {
+            toast.info(`${video ? "Video" : "Voice"} calling is coming soon.`);
           }}
           isAdmin={isAdmin}
           onLeaveRoom={handleLeaveRoom}
@@ -972,3 +961,4 @@ export default function CometChatRoom({ roomId, displayName, encryptionKey, part
     </ScreenShield>
   );
 }
+
