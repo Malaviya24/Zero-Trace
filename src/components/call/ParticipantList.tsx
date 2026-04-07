@@ -1,10 +1,8 @@
-import { Users, Mic, MicOff, Video, VideoOff, Wifi, WifiOff, RotateCcw } from "lucide-react";
-import { Badge } from "@/components/ui/badge";
-import { ScrollArea } from "@/components/ui/scroll-area";
-import { Avatar, AvatarFallback } from "@/components/ui/avatar";
-import { Button } from "@/components/ui/button";
-import { cn } from "@/lib/utils";
 import { motion } from "framer-motion";
+import { Mic, MicOff, RotateCcw, Users, Video, VideoOff, Wifi, WifiOff } from "lucide-react";
+
+import { Avatar, AvatarFallback, Button, ScrollArea } from "@/components/app/AppUI";
+import { cn } from "@/lib/utils";
 
 interface Participant {
   _id: string;
@@ -25,122 +23,79 @@ interface ParticipantListProps {
 
 export function ParticipantList({ participants, className, onReconnectParticipant }: ParticipantListProps) {
   return (
-    <div className={cn("flex flex-col h-full bg-gradient-to-b from-card to-card/95 border-l shadow-lg", className)}>
-      <div className="p-4 border-b bg-muted/30 backdrop-blur-sm">
+    <div className={cn("flex h-full flex-col bg-[#09090b] text-[#fafafa] [font-family:Space_Grotesk,_Inter,_sans-serif]", className)}>
+      <div className="border-b-2 border-[#3f3f46] p-4">
         <div className="flex items-center gap-3">
-          <div className="p-2 rounded-lg bg-primary/10">
-            <Users className="h-5 w-5 text-primary" />
+          <div className="flex h-12 w-12 items-center justify-center border-2 border-[#3f3f46] bg-[#18181b] text-[#dfe104]">
+            <Users className="h-5 w-5" />
           </div>
           <div>
-            <h3 className="font-bold text-base tracking-tight">Participants</h3>
-            <p className="text-xs text-muted-foreground">{participants.length} in call</p>
+            <h3 className="text-lg font-bold uppercase tracking-[-0.04em]">Participants</h3>
+            <p className="text-xs font-bold uppercase tracking-[0.18em] text-[#a1a1aa]">{participants.length} in call</p>
           </div>
         </div>
       </div>
-      
+
       <ScrollArea className="flex-1">
-        <div className="p-3 space-y-2">
+        <div className="space-y-2 p-3">
           {participants.map((participant, index) => (
             <motion.div
               key={participant._id}
-              initial={{ opacity: 0, x: -20 }}
+              initial={{ opacity: 0, x: -14 }}
               animate={{ opacity: 1, x: 0 }}
-              transition={{ delay: index * 0.05 }}
+              transition={{ delay: index * 0.04 }}
               className={cn(
-                "flex items-center gap-3 p-3 rounded-xl transition-all duration-200",
-                "bg-gradient-to-r from-muted/40 to-muted/20 hover:from-muted/60 hover:to-muted/40",
-                "border border-border/50 hover:border-border hover:shadow-md",
-                participant.isLocal && "ring-2 ring-primary/20 bg-primary/5"
+                "border border-[#3f3f46] bg-[#111217] p-3",
+                participant.isLocal ? "border-[#dfe104]" : "hover:bg-[#17181c]"
               )}
             >
-              <div className="relative">
-                <Avatar className="h-11 w-11 border-2 border-background shadow-sm">
-                  <AvatarFallback className={cn(
-                    "font-bold text-sm",
-                    participant.isLocal 
-                      ? "bg-gradient-to-br from-primary/20 to-primary/10 text-primary" 
-                      : "bg-gradient-to-br from-muted to-muted/80"
-                  )}>
-                    {participant.displayName.charAt(0).toUpperCase()}
-                  </AvatarFallback>
-                </Avatar>
-                {participant.connectionStatus === "connected" && (
-                  <div className="absolute -bottom-0.5 -right-0.5 h-3.5 w-3.5 rounded-full bg-green-500 border-2 border-background shadow-sm" />
-                )}
-              </div>
-              
-              <div className="flex-1 min-w-0">
-                <div className="flex items-center gap-2 mb-1">
-                  <p className="font-semibold text-sm truncate">
-                    {participant.displayName}
-                  </p>
-                  {participant.isLocal && (
-                    <Badge variant="secondary" className="text-[10px] h-4 px-1.5 font-medium">
-                      You
-                    </Badge>
-                  )}
+              <div className="flex items-center gap-3">
+                <div className="relative">
+                  <Avatar className="h-11 w-11 rounded-none border-2 border-[#3f3f46] bg-[#18181b]">
+                    <AvatarFallback className={cn(
+                      "rounded-none text-sm font-bold uppercase tracking-[0.16em]",
+                      participant.isLocal ? "bg-[#dfe104] text-black" : "bg-[#18181b] text-[#fafafa]"
+                    )}>
+                      {participant.displayName.charAt(0).toUpperCase()}
+                    </AvatarFallback>
+                  </Avatar>
+                  {participant.connectionStatus === "connected" ? <div className="absolute -bottom-1 -right-1 h-3 w-3 border border-black bg-[#dfe104]" /> : null}
                 </div>
-                
+
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center gap-2">
+                    <p className="truncate text-sm font-bold uppercase tracking-[0.08em]">{participant.displayName}</p>
+                    {participant.isLocal ? <span className="border border-[#3f3f46] px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-[0.18em] text-[#a1a1aa]">You</span> : null}
+                  </div>
+                  <div className="mt-2 inline-flex items-center gap-1 border border-[#3f3f46] bg-[#09090b] px-2 py-1 text-[10px] font-bold uppercase tracking-[0.16em] text-[#a1a1aa]">
+                    {participant.connectionStatus === "connected" ? <Wifi className="h-3 w-3 text-[#dfe104]" /> : participant.connectionStatus === "connecting" ? <span className="inline-block h-2 w-2 animate-pulse bg-[#dfe104]" /> : <WifiOff className="h-3 w-3 text-red-400" />}
+                    {participant.connectionStatus || "unknown"}
+                  </div>
+                </div>
+
                 <div className="flex items-center gap-1.5">
-                  {participant.connectionStatus === "connected" ? (
-                    <Badge variant="outline" className="text-[10px] h-5 px-2 border-green-500/30 bg-green-500/10 text-green-700 dark:text-green-400">
-                      <Wifi className="h-2.5 w-2.5 mr-1" />
-                      Connected
-                    </Badge>
-                  ) : participant.connectionStatus === "connecting" ? (
-                    <Badge variant="outline" className="text-[10px] h-5 px-2 border-yellow-500/30 bg-yellow-500/10 text-yellow-700 dark:text-yellow-400">
-                      <span className="inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-current mr-1" />
-                      Connecting
-                    </Badge>
-                  ) : (
-                    <Badge variant="outline" className="text-[10px] h-5 px-2 border-destructive/30 bg-destructive/10 text-destructive">
-                      <WifiOff className="h-2.5 w-2.5 mr-1" />
-                      Disconnected
-                    </Badge>
-                  )}
-                </div>
-              </div>
-              
-              <div className="flex items-center gap-1.5">
-                <div className={cn(
-                  "p-1.5 rounded-md transition-colors",
-                  participant.isAudioEnabled 
-                    ? "bg-muted/50 text-foreground" 
-                    : "bg-destructive/10 text-destructive"
-                )}>
-                  {participant.isAudioEnabled ? (
-                    <Mic className="h-3.5 w-3.5" />
-                  ) : (
-                    <MicOff className="h-3.5 w-3.5" />
-                  )}
-                </div>
-                <div className={cn(
-                  "p-1.5 rounded-md transition-colors",
-                  participant.isVideoEnabled 
-                    ? "bg-muted/50 text-foreground" 
-                    : "bg-destructive/10 text-destructive"
-                )}>
-                  {participant.isVideoEnabled ? (
-                    <Video className="h-3.5 w-3.5" />
-                  ) : (
-                    <VideoOff className="h-3.5 w-3.5" />
-                  )}
+                  <div className={cn("flex h-8 w-8 items-center justify-center border", participant.isAudioEnabled ? "border-[#3f3f46] bg-[#18181b] text-[#fafafa]" : "border-red-500 bg-red-500/15 text-red-400")}>
+                    {participant.isAudioEnabled ? <Mic className="h-3.5 w-3.5" /> : <MicOff className="h-3.5 w-3.5" />}
+                  </div>
+                  <div className={cn("flex h-8 w-8 items-center justify-center border", participant.isVideoEnabled ? "border-[#3f3f46] bg-[#18181b] text-[#fafafa]" : "border-red-500 bg-red-500/15 text-red-400")}>
+                    {participant.isVideoEnabled ? <Video className="h-3.5 w-3.5" /> : <VideoOff className="h-3.5 w-3.5" />}
+                  </div>
                 </div>
               </div>
 
-              {!participant.isLocal && onReconnectParticipant && participant.canReconnect && (
+              {!participant.isLocal && onReconnectParticipant && participant.canReconnect ? (
                 <Button
                   type="button"
                   size="sm"
                   variant="outline"
                   disabled={participant.reconnecting}
                   onClick={() => onReconnectParticipant(participant._id)}
-                  className="h-8 border-white/20 bg-transparent px-2 text-xs text-white hover:bg-white/10"
+                  className="mt-3 h-9 rounded-none border-[#3f3f46] bg-transparent px-3 text-[11px] font-bold uppercase tracking-[0.16em] text-[#fafafa] hover:bg-[#18181b]"
                 >
-                  <RotateCcw className={cn("mr-1 h-3 w-3", participant.reconnecting && "animate-spin")} />
+                  <RotateCcw className={cn("mr-2 h-3.5 w-3.5", participant.reconnecting && "animate-spin")} />
                   {participant.reconnecting ? "Reconnecting" : "Reconnect"}
                 </Button>
-              )}
+              ) : null}
             </motion.div>
           ))}
         </div>
@@ -148,3 +103,5 @@ export function ParticipantList({ participants, className, onReconnectParticipan
     </div>
   );
 }
+
+

@@ -1,129 +1,122 @@
-import { useQuery } from "convex/react";
 import { api } from "@/convex/_generated/api";
-import { Link, useNavigate } from "react-router";
-import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { SiteBadge, SiteButton, SitePanel, SiteSectionHeading } from "@/components/site/SitePrimitives";
+import { useQuery } from "convex/react";
+import { Hash, Plus, Shield, Users } from "lucide-react";
 import { motion } from "framer-motion";
-import { Plus, Users, Hash, Shield } from "lucide-react";
+import { useNavigate } from "react-router";
 
 export default function Dashboard() {
   const navigate = useNavigate();
   const rooms = useQuery(api.rooms.list) || [];
 
   return (
-    <div className="min-h-screen bg-background">
-      {/* Header */}
-      <header className="border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60 sticky top-0 z-50">
-        <div className="container flex h-16 items-center justify-between px-4 md:px-6">
-          <div className="flex items-center gap-2">
-            <Shield className="h-6 w-6 text-primary" />
-            <span className="text-lg font-bold tracking-tight">Zero Trace</span>
-          </div>
-          <nav className="flex items-center gap-4">
-            <Button variant="ghost" size="sm" asChild>
-              <Link to="/setup">
-                <Avatar className="h-8 w-8">
-                  <AvatarImage src="/avatars/01.png" alt="@shadcn" />
-                  <AvatarFallback>U</AvatarFallback>
-                </Avatar>
-              </Link>
-            </Button>
-          </nav>
+    <div className="mx-auto max-w-[95vw] px-4 py-10 md:px-8 md:py-14">
+      <div className="grid gap-12 border-b-2 border-border pb-10 lg:grid-cols-[0.9fr_1.1fr] lg:items-end">
+        <SiteSectionHeading
+          eyebrow="Room index"
+          title={<>Current secure surfaces and the rooms waiting for traffic.</>}
+          description="This dashboard keeps the language consistent with the public site while leaving the actual room interface untouched once someone crosses the threshold."
+        />
+        <div className="flex flex-col gap-4 sm:flex-row sm:justify-end">
+          <SiteButton size="lg" onClick={() => navigate("/create")}>
+            <Plus className="h-5 w-5" />
+            New room
+          </SiteButton>
         </div>
-      </header>
+      </div>
 
-      <main className="container px-4 md:px-6 py-8 space-y-8">
-        {/* Hero Section */}
-        <section className="space-y-4">
-          <div className="flex items-center justify-between">
-            <div>
-              <h1 className="text-3xl font-bold tracking-tight">Dashboard</h1>
-              <p className="text-muted-foreground">
-                Manage your secure communications and connect with the network.
-              </p>
-            </div>
-            <Button size="lg" className="gap-2 shadow-lg shadow-primary/20" onClick={() => navigate("/create")}>
-              <Plus className="h-5 w-5" />
-              New Encrypted Room
-            </Button>
+      <section className="py-10 md:py-14">
+        <div className="grid gap-px bg-border md:grid-cols-3">
+          <div className="bg-background p-6">
+            <p className="text-xs font-bold uppercase tracking-[0.24em] text-muted-foreground">Live rooms</p>
+            <p className="mt-4 text-[clamp(3rem,8vw,6rem)] font-bold uppercase leading-none tracking-[-0.08em]">{rooms.length}</p>
           </div>
-        </section>
+          <div className="bg-background p-6">
+            <p className="text-xs font-bold uppercase tracking-[0.24em] text-muted-foreground">Retention window</p>
+            <p className="mt-4 text-[clamp(3rem,8vw,6rem)] font-bold uppercase leading-none tracking-[-0.08em]">2H</p>
+          </div>
+          <div className="bg-background p-6">
+            <p className="text-xs font-bold uppercase tracking-[0.24em] text-muted-foreground">Identity model</p>
+            <p className="mt-4 text-[clamp(3rem,8vw,6rem)] font-bold uppercase leading-none tracking-[-0.08em]">Anon</p>
+          </div>
+        </div>
+      </section>
 
-        {/* Quick Stats / Overview */}
-        <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-2">
-          <Card>
-            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <CardTitle className="text-sm font-medium">Active Rooms</CardTitle>
-              <Hash className="h-4 w-4 text-muted-foreground" />
-            </CardHeader>
-            <CardContent>
-              <div className="text-2xl font-bold">{rooms?.length || 0}</div>
-              <p className="text-xs text-muted-foreground">
-                Currently live on the network
-              </p>
-            </CardContent>
-          </Card>
+      <section className="space-y-6">
+        <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+          <div>
+            <p className="site-kicker text-accent">Active rooms</p>
+            <h2 className="mt-2 text-[clamp(2.3rem,6vw,4.5rem)] font-bold uppercase leading-[0.86] tracking-[-0.06em]">
+              Operational rooms on the network.
+            </h2>
+          </div>
+          <SiteBadge>{rooms.length ? `${rooms.length} rooms online` : "No active rooms"}</SiteBadge>
         </div>
 
-        {/* Active Rooms Grid */}
-        <section className="space-y-4">
-          <div className="flex items-center justify-between">
-            <h2 className="text-xl font-semibold tracking-tight">Active Rooms</h2>
-            <Button variant="link" size="sm" className="text-muted-foreground" onClick={() => navigate("/join")}>
-              Join by ID &rarr;
-            </Button>
-          </div>
-          
-          <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-            {rooms?.map((room) => (
+        {rooms.length ? (
+          <div className="grid gap-4 lg:grid-cols-2 xl:grid-cols-3">
+            {rooms.map((room, index) => (
               <motion.div
                 key={room._id}
-                whileHover={{ scale: 1.02 }}
-                transition={{ type: "spring", stiffness: 300 }}
+                initial={{ opacity: 0, y: 20 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ duration: 0.35, delay: index * 0.05 }}
               >
-                <Card className="cursor-pointer hover:border-primary/50 transition-colors" onClick={() => navigate(`/room/${room.roomId}`)}>
-                  <CardHeader>
-                    <CardTitle className="flex items-center justify-between">
-                      <span className="truncate">{room.name || "Untitled Room"}</span>
-                      <span className="text-xs font-mono bg-muted px-2 py-1 rounded">
-                        {room.roomId}
-                      </span>
-                    </CardTitle>
-                    <CardDescription>
-                      Created by {room.creatorId ? "User" : "Anonymous"}
-                    </CardDescription>
-                  </CardHeader>
-                  <CardContent>
-                    <div className="flex items-center gap-4 text-sm text-muted-foreground">
-                      <div className="flex items-center gap-1">
-                        <Users className="h-4 w-4" />
-                        <span>{room.maxParticipants} max</span>
+                <SitePanel
+                  className="is-interactive group h-full cursor-pointer p-6"
+                  onClick={() => navigate(`/room/${room.roomId}`)}
+                >
+                  <div className="flex h-full flex-col justify-between gap-8">
+                    <div>
+                      <div className="flex items-start justify-between gap-4">
+                        <p className="text-4xl font-bold uppercase leading-none tracking-[-0.06em] text-muted group-hover:text-black">
+                          {room.roomId}
+                        </p>
+                        <Shield className="h-5 w-5 text-accent group-hover:text-black" />
                       </div>
-                      {room.settings?.selfDestruct && (
-                        <div className="flex items-center gap-1 text-destructive">
-                          <Shield className="h-4 w-4" />
-                          <span>Self-destruct</span>
-                        </div>
-                      )}
+                      <p className="mt-4 text-2xl font-bold uppercase leading-[0.9] tracking-[-0.05em]">
+                        {room.name || "Untitled room"}
+                      </p>
                     </div>
-                  </CardContent>
-                </Card>
+                    <div className="space-y-3">
+                      <div className="flex items-center justify-between text-sm uppercase tracking-[0.16em]">
+                        <span className="site-panel-muted">Capacity</span>
+                        <span>{room.maxParticipants}</span>
+                      </div>
+                      <div className="flex items-center justify-between text-sm uppercase tracking-[0.16em]">
+                        <span className="site-panel-muted">Mode</span>
+                        <span>{room.settings?.selfDestruct ? "Self-destruct" : "Standard"}</span>
+                      </div>
+                      <div className="flex items-center justify-between text-sm uppercase tracking-[0.16em]">
+                        <span className="site-panel-muted">Entry</span>
+                        <span className="inline-flex items-center gap-2">Open room <Users className="h-4 w-4" /></span>
+                      </div>
+                    </div>
+                  </div>
+                </SitePanel>
               </motion.div>
             ))}
-            
-            {/* Empty State */}
-            {rooms?.length === 0 && (
-              <div className="col-span-full flex flex-col items-center justify-center p-8 border border-dashed rounded-lg text-muted-foreground bg-muted/10">
-                <Hash className="h-12 w-12 mb-4 opacity-20" />
-                <p>No active rooms found.</p>
-                <Button variant="link" onClick={() => navigate("/create")}>Create one now</Button>
-              </div>
-            )}
           </div>
-        </section>
-
-      </main>
+        ) : (
+          <SitePanel className="p-8 md:p-12">
+            <div className="grid gap-8 md:grid-cols-[0.4fr_1fr] md:items-center">
+              <p className="site-number text-muted">00</p>
+              <div>
+                <p className="text-3xl font-bold uppercase leading-[0.9] tracking-[-0.05em] md:text-5xl">No active rooms are broadcasting right now.</p>
+                <p className="mt-4 max-w-2xl text-lg text-muted-foreground md:text-xl">
+                  Open a fresh encrypted room, define the rules, and send the invite link to the people who need it.
+                </p>
+                <div className="mt-6">
+                  <SiteButton onClick={() => navigate("/create")}>
+                    <Hash className="h-4 w-4" />
+                    Create first room
+                  </SiteButton>
+                </div>
+              </div>
+            </div>
+          </SitePanel>
+        )}
+      </section>
     </div>
   );
 }

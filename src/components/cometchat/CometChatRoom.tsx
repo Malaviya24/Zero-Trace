@@ -72,6 +72,36 @@ interface ChatRoomProps {
 const MESSAGE_CACHE_TTL_MS = 5 * 60 * 1000;
 const MAX_ATTACHMENT_BYTES = 100 * 1024 * 1024;
 const PARTICIPANT_MISSING_CONFIRM_MS = 4500;
+const MAX_ATTACHMENT_FILE_NAME_LENGTH = 255;
+
+function sanitizeOutgoingAttachmentName(fileName: string | undefined) {
+  const normalized = Array.from((fileName || "").split(/[\\/]/).pop() || "").filter((char) => { const code = char.charCodeAt(0); return code >= 32 && code !== 127; }).join("").trim();
+  if (!normalized) return null;
+  return normalized.slice(0, MAX_ATTACHMENT_FILE_NAME_LENGTH);
+}
+
+function validateOutgoingAttachment(type: "image" | "video" | "file" | "audio", file: File) {
+  if (!Number.isSafeInteger(file.size) || file.size <= 0) {
+    return { error: "File is empty or invalid." } as const;
+  }
+  if (file.size > MAX_ATTACHMENT_BYTES) {
+    return { error: "File is too large. Maximum upload size is 100 MB." } as const;
+  }
+  const fileName = sanitizeOutgoingAttachmentName(file.name);
+  if (!fileName) {
+    return { error: "File name is missing or invalid." } as const;
+  }
+  const fallbackMimeType = type === "file" ? "application/octet-stream" : "";
+  const mimeType = (file.type || fallbackMimeType).trim().toLowerCase();
+  if (!mimeType || mimeType.length > 255 || !/^[a-z0-9!#$&^_.+-]+\/[a-z0-9!#$&^_.+-]+$/.test(mimeType)) {
+    return { error: "File type is missing or invalid." } as const;
+  }
+  if (type === "image" && !mimeType.startsWith("image/")) return { error: "Image uploads must use an image file type." } as const;
+  if (type === "video" && !mimeType.startsWith("video/")) return { error: "Video uploads must use a video file type." } as const;
+  if (type === "audio" && !mimeType.startsWith("audio/")) return { error: "Audio uploads must use an audio file type." } as const;
+  return { fileName, mimeType } as const;
+}
+
 const ROOM_MISSING_CONFIRM_MS = 3500;
 const isMessageActive = (message: Message, now = Date.now()) =>
   (!message.expiresAt || message.expiresAt > now) &&
@@ -511,8 +541,9 @@ export default function CometChatRoom({ roomId, displayName, encryptionKey, part
   // Handlers
   const handleSendMessage = async (content: string, type: 'text' | 'image' | 'video' | 'file' | 'audio', file?: File) => {
     if (!encryptionKey) return;
-    if (file?.size && file.size > MAX_ATTACHMENT_BYTES) {
-      toast.error("File is too large. Maximum upload size is 100 MB.");
+    const attachmentMeta = file && type !== "text" ? validateOutgoingAttachment(type, file) : null;
+    if (attachmentMeta && "error" in attachmentMeta) {
+      toast.error(attachmentMeta.error);
       return;
     }
     const pendingId = `pending-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
@@ -535,9 +566,9 @@ export default function CometChatRoom({ roomId, displayName, encryptionKey, part
         status: "sending",
         type,
         storageId: pendingBlobUrl,
-        fileName: file?.name,
+        fileName: attachmentMeta?.fileName,
         fileSize: file?.size,
-        mimeType: file?.type,
+        mimeType: attachmentMeta?.mimeType,
         isEncryptedFile: false,
         replyTo: replyTo?._id,
         replyToMessage: replyTo
@@ -581,7 +612,7 @@ export default function CometChatRoom({ roomId, displayName, encryptionKey, part
         storageId = uploadedId;
         
         // Encrypt file metadata/name
-        encryptedContent = await ChatCrypto.encrypt(content || file.name, encryptionKey);
+        encryptedContent = await ChatCrypto.encrypt(content || attachmentMeta?.fileName || file.name, encryptionKey);
       } else {
         encryptedContent = await ChatCrypto.encrypt(content, encryptionKey);
         const firstUrl = room?.settings?.linkPreviewsEnabled === false ? null : firstUrlFromText(content);
@@ -621,9 +652,9 @@ export default function CometChatRoom({ roomId, displayName, encryptionKey, part
         participantToken,
         messageType: type,
         storageId,
-        fileName: file?.name,
+        fileName: attachmentMeta?.fileName,
         fileSize: file?.size,
-        mimeType: file?.type,
+        mimeType: attachmentMeta?.mimeType,
         linkPreviewEncrypted,
         replyTo: replyTo?._id,
       });
@@ -905,7 +936,6 @@ export default function CometChatRoom({ roomId, displayName, encryptionKey, part
         />
 
         <CometChatMessageList
-          roomId={roomId}
           messages={displayedMessages}
           onReact={handleReaction}
           onEdit={handleEditMessage}
@@ -961,4 +991,6 @@ export default function CometChatRoom({ roomId, displayName, encryptionKey, part
     </ScreenShield>
   );
 }
+
+
 

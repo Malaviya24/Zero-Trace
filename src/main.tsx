@@ -1,19 +1,22 @@
-import { Toaster } from "@/components/ui/sonner";
+import { ConvexConnectionBanner } from "@/components/site/ConvexConnectionBanner";
+import { SiteLoadingScreen } from "@/components/site/SiteLoadingScreen";
+import { SiteShell } from "@/components/site/SiteShell";
+import { SiteToaster } from "@/components/site/SiteToaster";
 import { InstrumentationProvider } from "@/instrumentation.tsx";
+import { CallProvider } from "@/call";
 import { ConvexProvider, ConvexReactClient } from "convex/react";
 import { StrictMode, Suspense, lazy, useEffect, type ReactNode } from "react";
 import { createRoot } from "react-dom/client";
 import { createBrowserRouter, RouterProvider } from "react-router";
 import "./index.css";
 import "./types/global.d.ts";
-import { CallProvider } from "@/call";
 
 const LandingPage = lazy(() => import("./pages/Landing.tsx"));
 const AuthPage = lazy(() => import("@/pages/Auth.tsx"));
 const CreateRoomPage = lazy(() => import("@/pages/CreateRoomPage.tsx"));
-const JoinRoomPage = lazy(() => import("@/pages/JoinRoomPage.tsx"));
-const JoinRoomWithIdPage = lazy(() => import("@/pages/JoinRoomWithIdPage.tsx"));
-const RoomPage = lazy(() => import("@/pages/RoomPage.tsx"));
+const JoinRoomPage = lazy(() => import("./pages/JoinRoomPage.tsx"));
+const JoinRoomWithIdPage = lazy(() => import("./pages/JoinRoomWithIdPage.tsx"));
+const RoomPage = lazy(() => import("./pages/RoomPage.tsx"));
 const GroupCallPage = lazy(() => import("./pages/GroupCallPage.tsx"));
 const NotFoundPage = lazy(() => import("./pages/NotFound.tsx"));
 const ProfileSetupPage = lazy(() => import("./pages/ProfileSetup.tsx"));
@@ -23,97 +26,111 @@ const convexUrl = import.meta.env.VITE_CONVEX_URL as string | undefined;
 const hasConvex = typeof convexUrl === "string" && convexUrl.length > 0;
 const convex = hasConvex ? new ConvexReactClient(convexUrl) : null;
 
-function RouteFallback() {
+function AppRouteFallback() {
   return (
-    <div className="h-dvh flex items-center justify-center bg-background">
-      <div className="h-6 w-6 rounded-full border-2 border-primary/20 border-t-primary animate-spin" />
-    </div>
+    <SiteShell showNoise={false}>
+      <SiteLoadingScreen message="LOADING" submessage="Preparing the next secure surface." />
+    </SiteShell>
   );
 }
 
-function RouteElement({ children }: { children: ReactNode }) {
-  return <Suspense fallback={<RouteFallback />}>{children}</Suspense>;
+function AppRouteElement({ children }: { children: ReactNode }) {
+  return (
+    <SiteShell showNoise={false}>
+      <Suspense fallback={<AppRouteFallback />}>{children}</Suspense>
+    </SiteShell>
+  );
+}
+
+function SiteRouteElement({ children }: { children: ReactNode }) {
+  return (
+    <SiteShell>
+      <Suspense fallback={<SiteLoadingScreen message="LOADING" submessage="Bringing the next kinetic surface online." />}>
+        {children}
+      </Suspense>
+    </SiteShell>
+  );
 }
 
 const router = createBrowserRouter([
   {
     path: "/",
     element: (
-      <RouteElement>
+      <SiteRouteElement>
         <LandingPage />
-      </RouteElement>
+      </SiteRouteElement>
     ),
   },
   {
     path: "/setup",
     element: (
-      <RouteElement>
+      <SiteRouteElement>
         <ProfileSetupPage />
-      </RouteElement>
+      </SiteRouteElement>
     ),
   },
   {
     path: "/dashboard",
     element: (
-      <RouteElement>
+      <SiteRouteElement>
         <DashboardPage />
-      </RouteElement>
+      </SiteRouteElement>
     ),
   },
   {
     path: "/auth",
     element: (
-      <RouteElement>
+      <SiteRouteElement>
         <AuthPage />
-      </RouteElement>
+      </SiteRouteElement>
     ),
   },
   {
     path: "/create",
     element: (
-      <RouteElement>
+      <SiteRouteElement>
         <CreateRoomPage />
-      </RouteElement>
+      </SiteRouteElement>
     ),
   },
   {
     path: "/join",
     element: (
-      <RouteElement>
+      <AppRouteElement>
         <JoinRoomPage />
-      </RouteElement>
+      </AppRouteElement>
     ),
   },
   {
     path: "/join/:roomId",
     element: (
-      <RouteElement>
+      <AppRouteElement>
         <JoinRoomWithIdPage />
-      </RouteElement>
+      </AppRouteElement>
     ),
   },
   {
     path: "/room/:roomId",
     element: (
-      <RouteElement>
+      <AppRouteElement>
         <RoomPage />
-      </RouteElement>
+      </AppRouteElement>
     ),
   },
   {
     path: "/call/:callId",
     element: (
-      <RouteElement>
+      <AppRouteElement>
         <GroupCallPage />
-      </RouteElement>
+      </AppRouteElement>
     ),
   },
   {
     path: "*",
     element: (
-      <RouteElement>
+      <SiteRouteElement>
         <NotFoundPage />
-      </RouteElement>
+      </SiteRouteElement>
     ),
   },
 ]);
@@ -140,26 +157,22 @@ function dismissSplash() {
 }
 
 const MissingConfig = () => (
-  <div
-    style={{
-      display: "flex",
-      minHeight: "100vh",
-      alignItems: "center",
-      justifyContent: "center",
-      background: "radial-gradient(ellipse at top, #0b0720, #080616)",
-      color: "#fff",
-    }}
-  >
-    <div style={{ maxWidth: 560, padding: 24, textAlign: "center" }}>
-      <div style={{ fontSize: 24, fontWeight: 600, marginBottom: 8 }}>Missing configuration</div>
-      <div style={{ opacity: 0.8, marginBottom: 16 }}>
-        Set VITE_CONVEX_URL in your environment before running the app.
-      </div>
-      <div style={{ fontSize: 12, opacity: 0.6 }}>
-        Add a .env file with VITE_CONVEX_URL or export it in your shell.
+  <SiteShell>
+    <div className="flex min-h-dvh items-center justify-center px-4 py-10 sm:px-6 md:py-20">
+      <div className="w-full max-w-4xl border-2 border-border bg-background p-6 sm:p-8 md:p-12">
+        <p className="site-kicker text-accent">Missing configuration</p>
+        <h1 className="mt-4 text-[clamp(2.6rem,11vw,8rem)] font-bold uppercase leading-[0.82] tracking-[-0.08em]">
+          Set VITE_CONVEX_URL
+        </h1>
+        <p className="mt-6 max-w-2xl text-base text-muted-foreground sm:text-lg md:text-xl">
+          Add VITE_CONVEX_URL to your environment before running the app.
+        </p>
+        <p className="mt-4 text-[0.68rem] uppercase tracking-[0.16em] text-muted-foreground sm:text-sm sm:tracking-[0.18em]">
+          Create a .env file or export the variable in your shell.
+        </p>
       </div>
     </div>
-  </div>
+  </SiteShell>
 );
 
 const app = (
@@ -169,8 +182,9 @@ const app = (
       {hasConvex && convex ? (
         <ConvexProvider client={convex}>
           <CallProvider>
+            <ConvexConnectionBanner />
             <RouterProvider router={router} />
-            <Toaster />
+            <SiteToaster />
           </CallProvider>
         </ConvexProvider>
       ) : (
@@ -189,3 +203,5 @@ function AppReady({ onReady }: { onReady: () => void }) {
   }, [onReady]);
   return null;
 }
+
+

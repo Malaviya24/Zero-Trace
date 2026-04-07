@@ -1,6 +1,7 @@
 import React from 'react';
 import { Lock, Users } from 'lucide-react';
-import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/app/AppUI";
 import { WhatsAppCallControls } from './WhatsAppCallControls';
 
 interface ActiveCallScreenProps {
@@ -15,8 +16,8 @@ interface ActiveCallScreenProps {
   onToggleVideo: () => void;
   onToggleSpeaker: () => void;
   onEndCall: () => void;
-  children?: React.ReactNode; // For video tiles
-  localVideo?: React.ReactNode; // For PiP
+  children?: React.ReactNode;
+  localVideo?: React.ReactNode;
 }
 
 export function ActiveCallScreen({
@@ -32,32 +33,27 @@ export function ActiveCallScreen({
   onToggleSpeaker,
   onEndCall,
   children,
-  localVideo
+  localVideo,
 }: ActiveCallScreenProps) {
-  const statusLabel =
-    callStatus === "ringing"
-      ? "Ringing..."
-      : callStatus === "reconnecting"
-      ? "Reconnecting..."
-      : callDuration;
+  const statusLabel = callStatus === 'ringing' ? 'Ringing' : callStatus === 'reconnecting' ? 'Reconnecting' : callDuration;
 
   return (
-    <div className="fixed inset-0 z-40 flex flex-col overflow-hidden bg-[#0b141a] text-white">
-      <div className="absolute inset-0 bg-[radial-gradient(circle_at_top,rgba(37,211,102,0.16),transparent_55%)]" />
-      <div className="absolute inset-0 bg-[linear-gradient(145deg,rgba(11,20,26,0.96),rgba(9,32,37,0.9),rgba(11,20,26,0.98))]" />
+    <div className="fixed inset-0 z-40 flex flex-col overflow-hidden bg-[#09090b] text-[#fafafa] [font-family:Space_Grotesk,_Inter,_sans-serif]">
+      <div aria-hidden="true" className="absolute inset-0 opacity-[0.16]" style={{ backgroundImage: "linear-gradient(rgba(63,63,70,0.28) 1px, transparent 1px), linear-gradient(90deg, rgba(63,63,70,0.28) 1px, transparent 1px)", backgroundSize: "36px 36px" }} />
 
       <div className="relative z-10 px-4 pt-5 sm:px-6 sm:pt-7">
-        <div className="mx-auto flex w-full max-w-xl items-center justify-between rounded-2xl border border-white/10 bg-black/35 px-3 py-2 backdrop-blur-xl">
+        <div className="mx-auto flex w-full max-w-3xl items-center justify-between border-2 border-[#3f3f46] bg-[#09090b] px-4 py-3">
           <div className="min-w-0">
-            <h1 className="truncate text-base font-semibold sm:text-lg">{remoteName}</h1>
-            <p className="text-xs text-white/70">{statusLabel}</p>
+            <p className="text-xs font-bold uppercase tracking-[0.24em] text-[#dfe104]">Active call</p>
+            <h1 className="truncate text-xl font-bold uppercase tracking-[-0.04em] sm:text-2xl">{remoteName}</h1>
+            <p className="text-xs font-bold uppercase tracking-[0.18em] text-[#a1a1aa]">{statusLabel}</p>
           </div>
           <div className="flex items-center gap-2">
-            <span className="inline-flex items-center gap-1 rounded-full border border-emerald-300/20 bg-emerald-500/15 px-2 py-1 text-[10px] font-medium uppercase tracking-wide text-emerald-100">
+            <span className="inline-flex items-center gap-1 border border-[#3f3f46] bg-[#18181b] px-2 py-1 text-[10px] font-bold uppercase tracking-[0.18em] text-[#dfe104]">
               <Lock className="h-3 w-3" />
               Encrypted
             </span>
-            <span className="inline-flex items-center gap-1 rounded-full bg-white/10 px-2 py-1 text-[10px] text-white/85">
+            <span className="inline-flex items-center gap-1 border border-[#3f3f46] bg-[#18181b] px-2 py-1 text-[10px] font-bold uppercase tracking-[0.18em] text-[#a1a1aa]">
               <Users className="h-3 w-3" />
               2
             </span>
@@ -65,29 +61,25 @@ export function ActiveCallScreen({
         </div>
       </div>
 
-      {isVideoEnabled && localVideo && (
-        <div className="absolute right-4 top-24 z-30 h-48 w-32 overflow-hidden rounded-lg border border-white/10 bg-black shadow-xl">
+      {isVideoEnabled && localVideo ? (
+        <div className="absolute right-4 top-28 z-30 h-48 w-32 overflow-hidden border-2 border-[#3f3f46] bg-[#111217]">
           {localVideo}
         </div>
-      )}
+      ) : null}
 
       <div className="relative z-10 flex flex-1 items-center justify-center px-4">
         {children ? (
-          <div className="relative h-full max-h-[80vh] w-full overflow-hidden rounded-2xl bg-black shadow-2xl">
+          <div className="relative h-full max-h-[80vh] w-full overflow-hidden border-2 border-[#3f3f46] bg-[#111217]">
             {children}
           </div>
         ) : (
-          <div className="relative">
-            <Avatar className="h-40 w-40 shadow-2xl ring-4 ring-[#1f2c34] md:h-56 md:w-56">
+          <div className="relative border-2 border-[#3f3f46] bg-[#111217] p-10">
+            <Avatar className="h-40 w-40 rounded-none border-2 border-[#3f3f46] bg-[#18181b] md:h-56 md:w-56">
               <AvatarImage src={remoteAvatar} className="object-cover" />
-              <AvatarFallback className="bg-[#128C7E] text-5xl font-bold">
+              <AvatarFallback className="rounded-none bg-[#18181b] text-5xl font-bold uppercase tracking-[0.08em] text-[#dfe104]">
                 {remoteName.slice(0, 2).toUpperCase()}
               </AvatarFallback>
             </Avatar>
-
-            {callStatus === "ringing" && (
-              <div className="absolute inset-0 animate-ping rounded-full border-2 border-[#25D366]/30 duration-[2s]" />
-            )}
           </div>
         )}
       </div>
@@ -106,3 +98,4 @@ export function ActiveCallScreen({
     </div>
   );
 }
+

@@ -1,10 +1,8 @@
 import { useEffect, useRef, useCallback, useMemo, useState } from "react";
 import { useParams, useNavigate, useLocation } from "react-router";
 import { useGroupCallStore } from "@/store/useGroupCallStore";
-import { Card, CardContent } from "@/components/ui/card";
-import { Button } from "@/components/ui/button";
+import { Button, Card, CardContent, Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/app/AppUI";
 import { AlertTriangle, ArrowLeft, Lock, Users } from "lucide-react";
-import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { useQuery, useMutation } from "@/lib/convex-helpers";
 import { typedApi } from "@/lib/api-types";
 import { Doc, Id } from "@/convex/_generated/dataModel";
@@ -1471,7 +1469,7 @@ function GroupCallPageContent() {
   if (!callId) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-background to-muted/20">
-        <Card className="w-96 shadow-lg border-destructive/20">
+        <Card className="w-full max-w-2xl rounded-none border-2 border-[#3f3f46] bg-[#09090b] text-[#fafafa] shadow-none">
           <CardContent className="p-8 text-center">
             <div className="mb-4 inline-flex h-16 w-16 items-center justify-center rounded-full bg-destructive/10">
               <AlertTriangle className="h-8 w-8 text-destructive" />
@@ -1490,7 +1488,7 @@ function GroupCallPageContent() {
   if (callPreflightError) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-background to-muted/20">
-        <Card className="w-96 shadow-lg border-destructive/20">
+        <Card className="w-full max-w-2xl rounded-none border-2 border-[#3f3f46] bg-[#09090b] text-[#fafafa] shadow-none">
           <CardContent className="p-8 text-center">
             <div className="mb-4 inline-flex h-16 w-16 items-center justify-center rounded-full bg-destructive/10">
               <AlertTriangle className="h-8 w-8 text-destructive" />
@@ -1519,7 +1517,7 @@ function GroupCallPageContent() {
   if (!roomSession) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-background to-muted/20">
-        <Card className="w-96 shadow-lg border-destructive/20">
+        <Card className="w-full max-w-2xl rounded-none border-2 border-[#3f3f46] bg-[#09090b] text-[#fafafa] shadow-none">
           <CardContent className="p-8 text-center">
             <div className="mb-4 inline-flex h-16 w-16 items-center justify-center rounded-full bg-destructive/10">
               <AlertTriangle className="h-8 w-8 text-destructive" />
@@ -1550,7 +1548,7 @@ function GroupCallPageContent() {
   if (call === null || call?.status === "ended") {
     return (
       <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-background to-muted/20">
-        <Card className="w-96 shadow-lg border-destructive/20">
+        <Card className="w-full max-w-2xl rounded-none border-2 border-[#3f3f46] bg-[#09090b] text-[#fafafa] shadow-none">
           <CardContent className="p-8 text-center">
             <div className="mb-4 inline-flex h-16 w-16 items-center justify-center rounded-full bg-destructive/10">
               <AlertTriangle className="h-8 w-8 text-destructive" />
@@ -1579,7 +1577,7 @@ function GroupCallPageContent() {
   if (isCallEncryptionRequired && callE2EEError) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-background to-muted/20">
-        <Card className="w-96 shadow-lg border-destructive/20">
+        <Card className="w-full max-w-2xl rounded-none border-2 border-[#3f3f46] bg-[#09090b] text-[#fafafa] shadow-none">
           <CardContent className="p-8 text-center">
             <div className="mb-4 inline-flex h-16 w-16 items-center justify-center rounded-full bg-destructive/10">
               <AlertTriangle className="h-8 w-8 text-destructive" />
@@ -1683,7 +1681,7 @@ function GroupCallPageContent() {
 
       <div className="relative z-10 flex h-full flex-col">
         <header className="px-3 pt-3 sm:px-6 sm:pt-5">
-          <div className="mx-auto flex max-w-6xl items-center justify-between rounded-2xl border border-white/10 bg-black/35 px-3 py-2.5 backdrop-blur-xl sm:px-4 sm:py-3">
+          <div className="mx-auto flex max-w-6xl items-center justify-between border-2 border-[#3f3f46] bg-[#09090b] px-3 py-2.5 sm:px-4 sm:py-3">
             <div className="flex items-center gap-2 sm:gap-3 min-w-0">
               <Button
                 size="icon"
@@ -1714,7 +1712,7 @@ function GroupCallPageContent() {
 
         <main className="flex-1 px-3 py-3 sm:px-6 sm:py-4">
           <div className="mx-auto flex h-full w-full max-w-[680px] flex-col gap-3">
-            <div className="relative flex-1 overflow-hidden rounded-[28px] border border-white/10 bg-black/25 p-3 shadow-[0_30px_70px_rgba(0,0,0,0.45)] backdrop-blur-xl sm:p-4">
+            <div className="relative flex-1 overflow-hidden border-2 border-[#3f3f46] bg-[#111217] p-3 sm:p-4">
               {otherParticipants.length === 0 ? (
                 <div className="flex h-full flex-col items-center justify-center text-center">
                   <div className="relative mb-5 flex h-24 w-24 items-center justify-center rounded-full border border-white/30 bg-white/10 text-3xl font-semibold text-white shadow-2xl">
@@ -1754,7 +1752,7 @@ function GroupCallPageContent() {
                           className={`relative aspect-[9/16] min-h-[220px] overflow-hidden rounded-2xl border px-4 py-6 text-center transition-colors ${
                             isParticipantConnected
                               ? "border-emerald-300/35 bg-emerald-500/10"
-                              : "border-white/15 bg-white/5"
+                              : "border-[#3f3f46] bg-[#111217]"
                           }`}
                         >
                           {hasRemoteVideo && remoteStream ? (
@@ -1783,7 +1781,7 @@ function GroupCallPageContent() {
                 </div>
               )}
 
-              <div className="pointer-events-none absolute bottom-3 right-3 flex h-24 w-36 flex-col justify-end overflow-hidden rounded-xl border border-white/20 bg-black/45 p-2 text-left shadow-xl backdrop-blur sm:h-28 sm:w-44">
+              <div className="pointer-events-none absolute bottom-3 right-3 flex h-24 w-36 flex-col justify-end overflow-hidden border-2 border-[#3f3f46] bg-[#09090b] p-2 text-left sm:h-28 sm:w-44">
                 {hasLocalVideo && state.localStream ? (
                   <div className="absolute inset-0">
                     <MediaVideoTile stream={state.localStream} mirrored />
@@ -1828,14 +1826,14 @@ function GroupCallPageContent() {
         </div>
 
         <Sheet open={isPeopleSheetOpen} onOpenChange={setIsPeopleSheetOpen}>
-          <SheetContent side="bottom" className="h-[78vh] rounded-t-3xl border-white/10 bg-[#0b141a] text-white">
+          <SheetContent side="bottom" className="h-[78vh] rounded-none border-2 border-[#3f3f46] bg-[#09090b] text-[#fafafa]">
             <SheetHeader>
               <SheetTitle>People in call</SheetTitle>
               <SheetDescription className="text-white/70">
                 Live participants and connection status.
               </SheetDescription>
             </SheetHeader>
-            <div className="h-[calc(100%-5.5rem)] overflow-hidden rounded-xl border border-white/10 bg-black/30">
+            <div className="h-[calc(100%-5.5rem)] overflow-hidden border-2 border-[#3f3f46] bg-[#111217]">
               <ParticipantList
                 participants={participantPanelData}
                 className="h-full border-0 bg-transparent"
@@ -1846,21 +1844,21 @@ function GroupCallPageContent() {
         </Sheet>
 
         <Sheet open={isChatSheetOpen} onOpenChange={setIsChatSheetOpen}>
-          <SheetContent side="bottom" className="h-[78vh] rounded-t-3xl border-white/10 bg-[#0b141a] text-white">
+          <SheetContent side="bottom" className="h-[78vh] rounded-none border-2 border-[#3f3f46] bg-[#09090b] text-[#fafafa]">
             <SheetHeader>
               <SheetTitle>Call chat</SheetTitle>
               <SheetDescription className="text-white/70">
                 Chat in this room while staying on call.
               </SheetDescription>
             </SheetHeader>
-            <div className="h-[calc(100%-5.5rem)] overflow-hidden rounded-xl border border-white/10 bg-black/30">
+            <div className="h-[calc(100%-5.5rem)] overflow-hidden border-2 border-[#3f3f46] bg-[#111217]">
               <CallChat roomId={call?.roomId} displayName={state.displayName || meDisplayName} className="h-full border-0 bg-transparent" />
             </div>
           </SheetContent>
         </Sheet>
 
         <Sheet open={isAudioSheetOpen} onOpenChange={setIsAudioSheetOpen}>
-          <SheetContent side="bottom" className="h-[60vh] rounded-t-3xl border-white/10 bg-[#0b141a] text-white">
+          <SheetContent side="bottom" className="h-[60vh] rounded-none border-2 border-[#3f3f46] bg-[#09090b] text-[#fafafa]">
             <SheetHeader>
               <SheetTitle>Audio routing</SheetTitle>
               <SheetDescription className="text-white/70">
@@ -1868,7 +1866,7 @@ function GroupCallPageContent() {
               </SheetDescription>
             </SheetHeader>
             <div className="space-y-4 px-4 pb-5">
-              <div className="flex items-center justify-between rounded-xl border border-white/10 bg-white/5 px-3 py-2">
+              <div className="flex items-center justify-between border-2 border-[#3f3f46] bg-[#111217] px-3 py-2">
                 <div>
                   <p className="text-sm font-medium">Speaker</p>
                   <p className="text-xs text-white/70">
@@ -1892,14 +1890,14 @@ function GroupCallPageContent() {
                     size="sm"
                     onClick={handleCycleAudioOutput}
                     disabled={!supportsSinkSelection || audioOutputs.length < 2}
-                    className="text-white/80 hover:bg-white/10"
+                    className="rounded-none border border-[#3f3f46] bg-[#18181b] text-[#fafafa] shadow-none hover:bg-[#232327]"
                   >
                     Next device
                   </Button>
                 </div>
                 <div className="space-y-2">
                   {audioOutputs.length === 0 ? (
-                    <p className="rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-white/70">
+                    <p className="border border-[#3f3f46] bg-[#111217] px-3 py-2 text-sm uppercase tracking-[0.14em] text-[#a1a1aa]">
                       No audio output devices detected yet.
                     </p>
                   ) : (
@@ -1938,3 +1936,7 @@ export default function GroupCallPage() {
     </ScreenShield>
   );
 }
+
+
+
+

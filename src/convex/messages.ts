@@ -1,4 +1,4 @@
-﻿import { v } from "convex/values";
+import { v } from "convex/values";
 import { action, mutation, query } from "./_generated/server";
 import type { Id } from "./_generated/dataModel";
 import { computeReadPatch } from "../lib/message-conflict-utils";
@@ -8,18 +8,37 @@ import { getRoomByRoomId, hardDeleteRoomData, isRoomExpiredOrInactive } from "./
 
 const HEART_VARIANTS = new Set(["\u2764", "\u2764\uFE0F"]);
 const ALLOWED_REACTIONS = new Set([
-  "\u{1F44D}", // 👍
-  "\u2764\uFE0F", // ❤️
-  "\u{1F602}", // 😂
-  "\u{1F62E}", // 😮
-  "\u{1F622}", // 😢
-  "\u{1F64F}", // 🙏
+  "\u{1F44D}", // ??
+  "\u2764\uFE0F", // ??
+  "\u{1F602}", // ??
+  "\u{1F62E}", // ??
+  "\u{1F622}", // ??
+  "\u{1F64F}", // ??
 ]);
 const MAX_ATTACHMENT_BYTES = 100 * 1024 * 1024;
 const LINK_PREVIEW_CACHE_TTL_MS = 6 * 60 * 60 * 1000;
 const UNFURL_TIMEOUT_MS = 5_000;
 const MAX_UNFURL_BYTES = 250_000;
 
+const MAX_ATTACHMENT_FILE_NAME_LENGTH = 255;
+const MAX_MIME_TYPE_LENGTH = 255;
+const MAX_STORAGE_ID_LENGTH = 512;
+const MAX_PREVIEW_URL_LENGTH = 2048;
+
+function sanitizeAttachmentName(value: string | undefined) {
+  if (!value) return undefined;
+  const normalized = Array.from(value.split(/[\\/]/).pop() || "").filter((char) => { const code = char.charCodeAt(0); return code >= 32 && code !== 127; }).join("").trim();
+  if (!normalized) return undefined;
+  return normalized.slice(0, MAX_ATTACHMENT_FILE_NAME_LENGTH);
+}
+
+function sanitizeMimeType(value: string | undefined) {
+  if (!value) return undefined;
+  const normalized = value.trim().toLowerCase();
+  if (!normalized || normalized.length > MAX_MIME_TYPE_LENGTH) return undefined;
+  if (!/^[a-z0-9!#$&^_.+-]+\/[a-z0-9!#$&^_.+-]+$/.test(normalized)) return undefined;
+  return normalized;
+}
 type LinkPreview = {
   title?: string;
   description?: string;
@@ -76,7 +95,7 @@ function isPrivateHost(hostname: string) {
 
 function normalizePreviewUrl(rawUrl: string): string | null {
   const trimmed = rawUrl.trim();
-  if (!trimmed) return null;
+  if (!trimmed || trimmed.length > MAX_PREVIEW_URL_LENGTH) return null;
   const withProtocol = /^www\./i.test(trimmed) ? `https://${trimmed}` : trimmed;
 
   let parsed: URL;
@@ -87,6 +106,7 @@ function normalizePreviewUrl(rawUrl: string): string | null {
   }
 
   if (!["http:", "https:"].includes(parsed.protocol)) return null;
+  if (parsed.username || parsed.password) return null;
   if (isPrivateHost(parsed.hostname)) return null;
   parsed.hash = "";
   return parsed.toString();
@@ -112,10 +132,11 @@ function extractMetaTagContent(html: string, keys: string[]) {
 }
 
 function resolveUrl(maybeUrl: string | undefined, baseUrl: string) {
-  if (!maybeUrl) return undefined;
+  if (!maybeUrl || maybeUrl.length > MAX_PREVIEW_URL_LENGTH) return undefined;
   try {
     const resolved = new URL(maybeUrl, baseUrl);
     if (!["http:", "https:"].includes(resolved.protocol)) return undefined;
+    if (resolved.username || resolved.password) return undefined;
     if (isPrivateHost(resolved.hostname)) return undefined;
     return resolved.toString();
   } catch {
@@ -412,27 +433,55 @@ export const sendMessage = mutation({
       });
 
       const rawMessageType = args.messageType || "text";
-      const normalizedMimeType = (args.mimeType || "").toLowerCase();
+      const normalizedMimeType = sanitizeMimeType(args.mimeType) || "";
       const messageType =
         rawMessageType === "file" && normalizedMimeType.startsWith("audio/")
           ? "audio"
           : rawMessageType;
       const body = args.content?.trim() ?? "";
+      const trimmedStorageId = args.storageId?.trim();
+      const normalizedFileName = sanitizeAttachmentName(args.fileName);
+      const normalizedLinkPreview = messageType === "text" ? args.linkPreviewEncrypted?.trim() : undefined;
 
-      if (messageType === "text" && !body) {
-        throw new Error("Message content cannot be empty.");
-      }
-      if (messageType !== "text" && !args.storageId) {
-        throw new Error("Attachment upload reference is missing.");
-      }
       if (body.length > 10_000) {
         throw new Error("Message is too long.");
       }
-      if (typeof args.fileSize === "number" && args.fileSize > MAX_ATTACHMENT_BYTES) {
-        throw new Error("File is too large. Maximum size is 100 MB.");
-      }
       if (!args.encryptionKeyId.trim()) {
         throw new Error("Missing encryption key reference.");
+      }
+      if (normalizedLinkPreview && normalizedLinkPreview.length > 12_000) {
+        throw new Error("Link preview payload is too large.");
+      }
+
+      if (messageType === "text") {
+        if (!body) {
+          throw new Error("Message content cannot be empty.");
+        }
+        if (trimmedStorageId || normalizedFileName || typeof args.fileSize === "number" || normalizedMimeType) {
+          throw new Error("Text messages cannot include attachment metadata.");
+        }
+      } else {
+        if (!trimmedStorageId || trimmedStorageId.length > MAX_STORAGE_ID_LENGTH) {
+          throw new Error("Attachment upload reference is missing or invalid.");
+        }
+        if (!normalizedFileName) {
+          throw new Error("Attachment name is missing or invalid.");
+        }
+        if (!normalizedMimeType) {
+          throw new Error("Attachment type is missing or invalid.");
+        }
+        if (!Number.isSafeInteger(args.fileSize) || (args.fileSize ?? 0) <= 0 || (args.fileSize ?? 0) > MAX_ATTACHMENT_BYTES) {
+          throw new Error("File is too large or invalid. Maximum size is 100 MB.");
+        }
+        if (messageType === "image" && !normalizedMimeType.startsWith("image/")) {
+          throw new Error("Image attachments must use an image MIME type.");
+        }
+        if (messageType === "video" && !normalizedMimeType.startsWith("video/")) {
+          throw new Error("Video attachments must use a video MIME type.");
+        }
+        if (messageType === "audio" && !normalizedMimeType.startsWith("audio/")) {
+          throw new Error("Audio attachments must use an audio MIME type.");
+        }
       }
 
       const room = await requireActiveRoom(ctx, args.roomId, { purgeIfExpired: true });
@@ -482,15 +531,15 @@ export const sendMessage = mutation({
         senderAvatar: participant.avatar,
         content: body,
         messageType,
-        storageId: args.storageId,
-        fileName: args.fileName,
+        storageId: trimmedStorageId,
+        fileName: normalizedFileName,
         fileSize: args.fileSize,
-        mimeType: args.mimeType,
+        mimeType: normalizedMimeType || undefined,
         isRead: false,
         selfDestructAt,
         expiresAt,
         encryptionKeyId: args.encryptionKeyId,
-        linkPreviewEncrypted: messageType === "text" ? args.linkPreviewEncrypted?.trim() : undefined,
+        linkPreviewEncrypted: normalizedLinkPreview,
         replyTo: resolvedReplyTo,
         replyToPreview: resolvedReplyToPreview,
       });
@@ -852,4 +901,5 @@ export const clearRoomMessages = mutation({
     }
   },
 });
+
 

@@ -1,5 +1,6 @@
-import { Button } from "@/components/ui/button";
+import { motion } from "framer-motion";
 import {
+  Bluetooth,
   Forward,
   MessageSquare,
   Mic,
@@ -12,9 +13,9 @@ import {
   VideoOff,
   Volume2,
   VolumeX,
-  Bluetooth,
 } from "lucide-react";
-import { motion } from "framer-motion";
+
+import { Button } from "@/components/app/AppUI";
 import { getParticipantLabel, getQualityToneClass } from "@/lib/call-ui-utils";
 
 interface WhatsAppCallControlsProps {
@@ -64,111 +65,117 @@ export function WhatsAppCallControls({
 
   return (
     <motion.div
-      initial={{ opacity: 0, y: 50 }}
+      initial={{ opacity: 0, y: 32 }}
       animate={{ opacity: 1, y: 0 }}
-      transition={{ delay: 0.2 }}
-      className="w-full max-w-3xl px-3 sm:px-5 pb-4 sm:pb-6"
+      transition={{ delay: 0.12 }}
+      className="w-full max-w-4xl px-3 pb-4 sm:px-5 sm:pb-6"
     >
       <div className="mb-3 flex flex-wrap items-center justify-center gap-2">
-        <span className="rounded-full bg-black/40 px-3 py-1 text-xs font-medium text-white/90 tabular-nums ring-1 ring-white/15">
+        <span className="border border-[#3f3f46] bg-[#09090b] px-3 py-1.5 text-[11px] font-bold uppercase tracking-[0.18em] text-[#fafafa]">
           {callDurationLabel || "00:00"}
         </span>
-        <span className={`rounded-full bg-black/40 px-3 py-1 text-xs font-medium uppercase tracking-wide ring-1 ring-white/15 ${qualityTone}`}>
+        <span className={`border border-[#3f3f46] bg-[#09090b] px-3 py-1.5 text-[11px] font-bold uppercase tracking-[0.18em] ${qualityTone}`}>
           {connectionQuality || "unknown"}
         </span>
-        <span className="rounded-full bg-black/40 px-3 py-1 text-xs text-white/90 ring-1 ring-white/15">
+        <span className="border border-[#3f3f46] bg-[#09090b] px-3 py-1.5 text-[11px] font-bold uppercase tracking-[0.18em] text-[#a1a1aa]">
           {getParticipantLabel(participantsCount)}
         </span>
-        {isBluetooth && (
-          <span className="inline-flex items-center gap-1 rounded-full bg-sky-500/20 px-2.5 py-1 text-[10px] font-medium text-sky-200 ring-1 ring-sky-300/20" title="Audio through Bluetooth">
+        {isBluetooth ? (
+          <span className="inline-flex items-center gap-1 border border-[#3f3f46] bg-[#09090b] px-3 py-1.5 text-[11px] font-bold uppercase tracking-[0.18em] text-[#dfe104]">
             <Bluetooth className="h-3 w-3" />
             Bluetooth
           </span>
-        )}
+        ) : null}
       </div>
 
-      <div className="rounded-[28px] bg-black/55 px-3 py-4 shadow-[0_16px_40px_rgba(0,0,0,0.45)] ring-1 ring-white/10 backdrop-blur-2xl">
-        <div className="mb-3 flex items-center justify-center gap-2 sm:gap-3">
-          {onToggleSpeaker && (
+      <div className="border-2 border-[#3f3f46] bg-[#09090b] p-3 sm:p-4">
+        <div className="mb-4 flex items-center justify-center gap-2 sm:gap-3">
+          {onToggleSpeaker ? (
             <Button
               onClick={onToggleSpeaker}
               size="icon"
-              className={`h-12 w-12 rounded-full ${isSpeakerEnabled ? "bg-white/25 hover:bg-white/35 text-white" : "bg-white/10 text-white/70 hover:bg-white/20"}`}
+              className={`h-12 w-12 rounded-none border-2 ${isSpeakerEnabled ? "border-[#dfe104] bg-[#dfe104] text-black hover:bg-[#d3d53c]" : "border-[#3f3f46] bg-[#18181b] text-[#fafafa] hover:bg-[#232327]"}`}
               aria-label={speakerLabel}
               title={speakerLabel}
             >
               {isSpeakerEnabled ? <Volume2 className="h-5 w-5" /> : <VolumeX className="h-5 w-5" />}
             </Button>
-          )}
-          {onToggleVideo && (
+          ) : null}
+          {onToggleVideo ? (
             <Button
               onClick={onToggleVideo}
               size="icon"
-              className={`h-12 w-12 rounded-full ${isVideoEnabled ? "bg-emerald-500 hover:bg-emerald-400 text-black" : "bg-white/10 text-white/70 hover:bg-white/20"}`}
+              className={`h-12 w-12 rounded-none border-2 ${isVideoEnabled ? "border-[#dfe104] bg-[#dfe104] text-black hover:bg-[#d3d53c]" : "border-[#3f3f46] bg-[#18181b] text-[#fafafa] hover:bg-[#232327]"}`}
               aria-label={videoLabel}
               title={videoLabel}
             >
               {isVideoEnabled ? <Video className="h-5 w-5" /> : <VideoOff className="h-5 w-5" />}
             </Button>
-          )}
-        <Button
-          onClick={onToggleAudio}
-          size="icon"
-              className={`h-14 w-14 rounded-full ${isAudioEnabled ? "bg-white/25 hover:bg-white/35 text-white" : "bg-amber-500 hover:bg-amber-400 text-black"}`}
-              aria-label={micLabel}
-              title={micLabel}
-        >
-          {isAudioEnabled ? <Mic className="h-5 w-5" /> : <MicOff className="h-5 w-5" />}
-        </Button>
-
-        {onToggleHold && (
+          ) : null}
+          <Button
+            onClick={onToggleAudio}
+            size="icon"
+            className={`h-14 w-14 rounded-none border-2 ${isAudioEnabled ? "border-[#3f3f46] bg-[#18181b] text-[#fafafa] hover:bg-[#232327]" : "border-[#dfe104] bg-[#dfe104] text-black hover:bg-[#d3d53c]"}`}
+            aria-label={micLabel}
+            title={micLabel}
+          >
+            {isAudioEnabled ? <Mic className="h-5 w-5" /> : <MicOff className="h-5 w-5" />}
+          </Button>
+          {onToggleHold ? (
             <Button
               onClick={onToggleHold}
               size="icon"
-              className={`h-12 w-12 rounded-full ${isOnHold ? "bg-indigo-500 hover:bg-indigo-400 text-white" : "bg-white/25 hover:bg-white/35 text-white"}`}
+              className={`h-12 w-12 rounded-none border-2 ${isOnHold ? "border-[#dfe104] bg-[#dfe104] text-black hover:bg-[#d3d53c]" : "border-[#3f3f46] bg-[#18181b] text-[#fafafa] hover:bg-[#232327]"}`}
               aria-label={holdLabel}
               title={holdLabel}
             >
-            <Pause className="h-5 w-5" />
-          </Button>
-        )}
+              <Pause className="h-5 w-5" />
+            </Button>
+          ) : null}
           <Button
             onClick={onEndCall}
             size="icon"
-            className="h-16 w-16 rounded-full bg-red-500 hover:bg-red-400 text-white shadow-[0_10px_24px_rgba(239,68,68,0.45)]"
+            className="h-16 w-16 rounded-none border-2 border-red-500 bg-red-500 text-white hover:bg-red-400"
             aria-label="End call"
             title="End call"
           >
             <PhoneOff className="h-6 w-6" />
-        </Button>
-          {onTransferCall && (
-            <Button onClick={onTransferCall} size="icon" className="h-12 w-12 rounded-full bg-white/25 hover:bg-white/35 text-white" aria-label="Share call" title="Share call link">
+          </Button>
+          {onTransferCall ? (
+            <Button
+              onClick={onTransferCall}
+              size="icon"
+              className="h-12 w-12 rounded-none border-2 border-[#3f3f46] bg-[#18181b] text-[#fafafa] hover:bg-[#232327]"
+              aria-label="Share call"
+              title="Share call link"
+            >
               <Forward className="h-5 w-5" />
             </Button>
-          )}
+          ) : null}
         </div>
 
-        <div className="flex items-center justify-center gap-4">
-          {onToggleParticipants && (
-            <Button onClick={onToggleParticipants} size="sm" variant="ghost" className="h-9 rounded-full px-3 text-white/85 hover:bg-white/15" aria-label="Participants">
-              <Users className="h-4 w-4 mr-2" />
+        <div className="flex flex-wrap items-center justify-center gap-2 sm:gap-3">
+          {onToggleParticipants ? (
+            <Button onClick={onToggleParticipants} size="sm" className="h-10 rounded-none border border-[#3f3f46] bg-[#18181b] px-4 text-xs font-bold uppercase tracking-[0.16em] text-[#fafafa] hover:bg-[#232327]">
+              <Users className="mr-2 h-4 w-4" />
               People
             </Button>
-          )}
-          {onToggleChat && (
-            <Button onClick={onToggleChat} size="sm" variant="ghost" className="h-9 rounded-full px-3 text-white/85 hover:bg-white/15" aria-label="Chat">
-              <MessageSquare className="h-4 w-4 mr-2" />
+          ) : null}
+          {onToggleChat ? (
+            <Button onClick={onToggleChat} size="sm" className="h-10 rounded-none border border-[#3f3f46] bg-[#18181b] px-4 text-xs font-bold uppercase tracking-[0.16em] text-[#fafafa] hover:bg-[#232327]">
+              <MessageSquare className="mr-2 h-4 w-4" />
               Chat
             </Button>
-          )}
-          {onOpenSettings && (
-            <Button onClick={onOpenSettings} size="sm" variant="ghost" className="h-9 rounded-full px-3 text-white/85 hover:bg-white/15" aria-label="Settings">
-              <Settings className="h-4 w-4 mr-2" />
+          ) : null}
+          {onOpenSettings ? (
+            <Button onClick={onOpenSettings} size="sm" className="h-10 rounded-none border border-[#3f3f46] bg-[#18181b] px-4 text-xs font-bold uppercase tracking-[0.16em] text-[#fafafa] hover:bg-[#232327]">
+              <Settings className="mr-2 h-4 w-4" />
               Audio
             </Button>
-          )}
+          ) : null}
         </div>
       </div>
     </motion.div>
   );
 }
+
